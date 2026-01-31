@@ -1,0 +1,72 @@
+# Environment & Secrets
+.env
+.env.*
+*.env
+!.env.example
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+job_radar.db
+
+# Gmail/OAuth credentials
+credentials.json
+token.json
+token.pickle
+*.pickle
+client_secret*.json
+
+# API keys and secrets
+secrets/
+*.pem
+*.key
+*.p12
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+*.so
+.eggs/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+venv/
+env/
+.venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+*.code-workspace
+.cursor/
+
+# Logs
+*.log
+logs/
+
+# OS files
+Thumbs.db
+.DS_Store
+*~
+
+# Backup files
+*.bak
+*.backup
+
+# Personal configuration (use *.example files as templates)
+config/profile.yaml
+launchd/com.sammontoya.jobradar.plist

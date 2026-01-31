@@ -1,0 +1,181 @@
+# Job Search Profile Configuration
+# Customize this file to match your job search criteria
+
+profile:
+  name: "Your Name"
+  experience_years: 5
+  layoff_date: "2025-01-01"  # Optional: used for email import date filtering
+  remote_preference: true
+
+target_titles:
+  primary:
+    - "AI Product Manager"
+    - "Senior AI Product Manager"
+    - "Lead AI Product Manager"
+    - "Staff Product Manager"
+    - "Principal Product Manager"
+    - "Director of Product"
+    - "Group Product Manager"
+  secondary:
+    - "Product Manager, AI"
+    - "Product Manager, ML"
+    - "Product Manager, Search"
+    - "Product Manager, Discovery"
+    - "Product Manager, Personalization"
+    - "Product Manager, Recommendations"
+
+required_keywords:
+  # Must have at least one from primary
+  primary:
+    - "AI"
+    - "ML"
+    - "machine learning"
+    - "artificial intelligence"
+    - "search"
+    - "personalization"
+    - "recommendations"
+    - "GenAI"
+    - "generative AI"
+    - "LLM"
+    - "large language model"
+    - "discovery"
+  # Bonus points for secondary
+  secondary:
+    - "product manager"
+    - "product management"
+    - "agentic"
+    - "RAG"
+    - "embeddings"
+    - "NLP"
+    - "natural language"
+    - "conversational"
+    - "chatbot"
+    - "ranking"
+    - "relevance"
+    - "recommendation engine"
+    - "collaborative filtering"
+    - "content-based"
+
+negative_keywords:
+  # Exclude jobs containing these
+  - "junior"
+  - "associate"
+  - "entry level"
+  - "entry-level"
+  - "intern"
+  - "internship"
+  - "contract"
+  - "contractor"
+  - "C2C"
+  - "corp to corp"
+
+compensation:
+  min_salary: 185000
+  max_salary: 225000
+  flexible: true  # Open to great opportunities outside range
+  currency: "USD"
+
+location:
+  remote_only: false
+  preferred:
+    - "Remote"
+    - "San Francisco"
+    - "New York"
+    - "Seattle"
+    - "Los Angeles"
+    - "Austin"
+  excluded:
+    - "India"
+    - "Philippines"
+    - "Pakistan"
+
+target_companies:
+  # Tier 1: Dream companies
+  tier1:
+    - "OpenAI"
+    - "Anthropic"
+    - "Google"
+    - "Meta"
+    - "Apple"
+    - "Microsoft"
+    - "Amazon"
+    - "Netflix"
+  # Tier 2: Great companies
+  tier2:
+    - "Stripe"
+    - "Airbnb"
+    - "Figma"
+    - "Notion"
+    - "Vercel"
+    - "Linear"
+    - "Perplexity"
+    - "Character.ai"
+    - "Cohere"
+    - "Databricks"
+    - "Snowflake"
+    - "Pinecone"
+    - "Weaviate"
+  # Tier 3: Good companies
+  tier3:
+    - "Spotify"
+    - "Pinterest"
+    - "Reddit"
+    - "Discord"
+    - "Slack"
+    - "Dropbox"
+    - "Zoom"
+    - "Twilio"
+    - "Elastic"
+    - "MongoDB"
+
+sources:
+  enabled:
+    - "indeed"
+    - "linkedin"
+    - "glassdoor"
+    - "google"
+    - "remoteok"
+    - "wellfound"
+    - "greenhouse"
+    - "lever"
+    - "hn_whoishiring"
+  disabled:
+    - "adzuna"  # Enable if you have API key
+
+scoring:
+  # Description-Centric Scoring Algorithm (v2)
+  # The algorithm prioritizes job DESCRIPTION analysis over title matching.
+  # A "Staff PM" with AI/ML heavy description scores higher than "AI PM" with generic description.
+  #
+  # New weights (hardcoded in keyword_matcher.py):
+  #   - Description keyword relevance: 40% (primary signal)
+  #   - Title relevance: 20% (partial credit for related titles)
+  #   - Keyword variety & density: 15% (more different keywords = better)
+  #   - Company tier: 15%
+  #   - Salary/Remote: 10%
+  #
+  # Legacy weights (kept for reference, not used):
+  title_match: 0.20  # Reduced from 0.35
+  keyword_match: 0.40  # Increased, now focuses on description
+  company_tier: 0.15
+  salary_match: 0.05
+  remote_match: 0.05
+
+  # Minimum score to notify (0-100)
+  min_notification_score: 50
+
+  # Minimum score to save (0-100)
+  min_save_score: 30
+
+notifications:
+  slack:
+    enabled: true
+    min_score: 60  # Only notify for scores >= 60
+    include_low_score: false
+    batch_mode: false  # Send immediately vs batch
+    batch_interval_hours: 4
+
+  email_digest:
+    enabled: false
+    frequency: "daily"  # daily, weekly
+    send_time: "09:00"

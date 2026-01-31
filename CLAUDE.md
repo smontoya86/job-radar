@@ -1,0 +1,253 @@
+# Job Radar - Claude Context
+
+## Project Overview
+
+Job Radar is a complete job search automation system for Sam Montoya, a Senior/Lead/Staff AI Product Manager. The system has two main components:
+
+1. **Job Radar** - Background service that monitors job boards, scores matches, and sends Slack alerts
+2. **Application Tracker** - Web dashboard for tracking applications, resumes, interviews, and analytics
+
+## User Profile
+
+- **Name:** Sam Montoya
+- **Target Roles:** AI Product Manager, Senior/Lead/Staff/Principal PM, Director of Product
+- **Focus Areas:** Search, Discovery, Personalization, Recommendations, GenAI, Agentic AI, LLMs
+- **Salary Range:** $185k-$225k (flexible)
+- **Preference:** Remote
+- **Experience:** 8+ years
+- **Layoff Date:** January 20, 2026
+- **Former Employer:** Weedmaps (laid off)
+
+## Key Files
+
+| File | Purpose |
+|------|---------|
+| `config/profile.yaml` | Job search criteria, keywords, target companies |
+| `config/settings.py` | Environment settings (Pydantic) |
+| `src/main.py` | Scheduler entry point |
+| `dashboard/app.py` | Streamlit dashboard entry |
+| `.env` | Secrets (Slack webhook, Gmail paths) |
+| `src/persistence/cleanup.py` | Data retention (60-day cleanup, description truncation) |
+| `src/analytics/rejection_analysis.py` | Analyze rejected applications for resume gaps |
+| `src/gmail/parser.py` | Email classification and company extraction |
+| `scripts/run_scan.py` | One-time scan for GitHub Actions |
+| `scripts/reprocess_emails.py` | Re-parse and link existing emails |
+| `.github/workflows/job-scan.yml` | GitHub Actions workflow (every 30 min) |
+
+## Running the Project
+
+```bash
+# Always activate venv first
+cd /Users/sammontoya/job-hunt/job-radar
+source venv/bin/activate
+
+# Run dashboard
+streamlit run dashboard/app.py
+
+# Run job radar (background scanning)
+python src/main.py
+```
+
+### Background Service (launchd)
+
+Job Radar runs as a background service via launchd:
+
+```bash
+# Load service (starts at login)
+launchctl load ~/Library/LaunchAgents/com.sammontoya.jobradar.plist
+
+# Unload service
+launchctl unload ~/Library/LaunchAgents/com.sammontoya.jobradar.plist
+
+# Check status
+launchctl list | grep jobradar
+
+# View logs
+tail -f logs/jobradar.log
+```
+
+The plist is located at `launchd/com.sammontoya.jobradar.plist`. Copy to `~/Library/LaunchAgents/` to enable.
+
+### GitHub Actions Deployment (Alternative)
+
+For cloud deployment, GitHub Actions runs the scanner every 30 minutes with Supabase PostgreSQL:
+
+1. Create Supabase account at supabase.com
+2. Get connection string: Settings → Database → Connection string → URI
+3. Add GitHub secrets: `DATABASE_URL`, `SLACK_WEBHOOK_URL`
+4. Push to public repo for free Actions minutes
+
+The workflow is at `.github/workflows/job-scan.yml`. Gmail import is disabled in CI (requires OAuth).
+
+**Storage optimization:** Job descriptions truncated to 2,000 chars. Jobs older than 60 days auto-deleted (except applied/saved).
+
+## Common Issues & Solutions
+
+### 1. Import Errors
+**Problem:** `ModuleNotFoundError` for various packages
+**Solution:** Always activate the virtual environment first:
+```bash
+source venv/bin/activate
+```
+The venv contains all dependencies. System Python doesn't have them.
+
+### 2. Path Issues
+**Problem:** Imports fail when running from different directories
+**Solution:** Scripts add project root to sys.path:
+```python
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+```
+
+### 3. Gmail Not Authenticated
+**Problem:** Gmail features fail
+**Solution:** Run `python scripts/setup_gmail.py` to complete OAuth flow
+
+### 4. Slack Notifications Not Working
+**Problem:** No Slack messages received
+**Solution:**
+1. Check `.env` has `SLACK_WEBHOOK_URL` set
+2. Run `python scripts/setup_slack.py` to test
+
+### 5. Database Issues
+**Problem:** Missing tables or schema errors
+**Solution:** `init_db()` is called automatically but can be forced:
+```python
+from src.persistence.database import init_db
+init_db()
+```
+
+## Architecture Patterns
+
+### Collectors Pattern
+All collectors inherit from `BaseCollector` and implement async `collect()`:
+```python
+class MyCollector(BaseCollector):
+    name = "my_source"
+
+    async def collect(self, search_queries: list[str]) -> list[JobData]:
+        # Fetch and return JobData objects
+```
+
+### Service Pattern
+Services (`ApplicationService`, `ResumeService`) take a database session:
+```python
+with get_session() as session:
+    service = ApplicationService(session)
+    app = service.create_application(...)
+```
+
+### Settings Access
+```python
+from config.settings import settings
+print(settings.slack_webhook_url)
+print(settings.database_url)
+```
+
+## Database
+
+- **Location:** `job_radar.db` (SQLite, created in project root)
+- **ORM:** SQLAlchemy 2.0 with declarative models
+- **Models:** Job, Application, Resume, Interview, EmailImport, StatusHistory
+
+## Dependencies
+
+Key packages (all in venv):
+- `python-jobspy` - Multi-site job scraping
+- `aiohttp` - Async HTTP
+- `sqlalchemy` - Database ORM
+- `streamlit` - Dashboard UI
+- `apscheduler` - Background scheduling
+- `slack-sdk` - Slack integration
+- `google-api-python-client` - Gmail API
+
+## Testing Changes
+
+Quick validation:
+```bash
+source venv/bin/activate
+python -c "
+from config.settings import settings
+from src.persistence.database import init_db
+init_db()
+print('OK')
+"
+```
+
+## Lessons Learned
+
+### Environment & Setup
+1. **Always use virtual environment** - macOS has externally-managed Python that won't allow pip installs
+2. **Check all imports before delivery** - Run a quick import test to catch missing dependencies
+3. **Path handling is critical** - Use `Path(__file__).parent` patterns for reliable imports
+4. **Collectors may fail silently** - They return empty lists on error; check logs
+
+### Asyncio & Background Services
+5. **Asyncio event loop in launchd** - When running as a service, use `asyncio.run(async_main())` pattern. Don't create event loops manually with `get_event_loop()` as it fails when there's no running loop
+6. **Python unbuffered output for launchd** - Use `-u` flag in plist command to see output immediately in logs
+
+### Job Description Parsing
+7. **Greenhouse API quirk** - The list endpoint `/v1/boards/{company}/jobs` does NOT include job descriptions. Must make separate calls to `/v1/boards/{company}/jobs/{id}` for each job to get full content
+8. **HTML entity encoding** - Greenhouse API returns HTML-encoded content (`&lt;` instead of `<`). Must call `html.unescape()` BEFORE BeautifulSoup to properly strip tags
+9. **Job ID extraction** - Greenhouse URLs use query params (`?gh_jid=12345`), not path segments. Parse carefully and store job_id in extra_data during initial fetch
+
+### Matching Algorithm
+10. **Description > Title** - A "Staff PM" with AI-heavy description is more relevant than "AI PM" with generic description. The description-centric algorithm weights description keywords at 40% vs title at 20%
+11. **Keyword variety matters** - Jobs mentioning multiple different keywords (AI, ML, search) are more relevant than ones repeating the same keyword
+
+### Email Parser
+12. **Extract company from subject, not domain** - ATS emails (greenhouse-mail.io, ashbyhq.com, rippling.com) have useless subdomains. Parse subject lines like "Thank you from {Company}" or "{Company} Update" instead
+13. **Interview detection needs strong signals** - Weak signals like "next step" cause false positives. Require scheduling links (calendly, google calendar) or explicit phrases ("Interview Request", "Phone Screen") for interview_invite classification
+14. **Negative signals prevent false positives** - Phrases like "if we decide to move forward" or "your application was sent" indicate NOT an interview invite
+
+### Streamlit
+15. **Module caching issues** - Streamlit caches imported modules. When adding new methods to existing classes, must fully restart Streamlit (Ctrl+C and restart), not just reload. Clear `__pycache__` if issues persist
+16. **Background tasks for dashboard** - Use `run_in_background=true` when starting Streamlit from scripts to avoid blocking
+
+## Application Statuses
+
+Simplified status workflow:
+- `applied` - Initial application submitted
+- `phone_screen` - Recruiter/phone screen scheduled or completed
+- `interviewing` - Active interview process (HM, panel, onsite)
+- `offer` - Received offer
+- `accepted` - Accepted offer
+- `rejected` - Rejected at any stage
+- `withdrawn` - Withdrew application
+- `ghosted` - No response after 2+ weeks
+
+## Interview Types
+
+Tracked interview types for analytics:
+- Phone Screen
+- HM Interview (Hiring Manager)
+- Product Sense
+- Technical
+- Behavioral
+- Panel
+- Onsite
+- Take Home
+- Final Round
+- Other
+
+## Scoring Algorithm
+
+**Description-Centric Scoring (v2)** - Prioritizes job description analysis:
+
+| Component | Weight | Description |
+|-----------|--------|-------------|
+| Description Keywords | 40% | Primary/secondary keywords found in job description |
+| Title Relevance | 20% | Exact match or partial credit for related titles |
+| Keyword Variety | 15% | Bonus for mentioning multiple different keywords |
+| Company Tier | 15% | Tier 1 = 100%, Tier 2 = 70%, Tier 3 = 40% |
+| Salary/Remote | 10% | 5% each for matching preferences |
+
+The key insight: A "Staff PM" role with AI/ML-heavy description should score higher than an "AI PM" with a generic description.
+
+## Future Improvements
+
+- [ ] Add more Greenhouse/Lever companies to default lists
+- [ ] Implement email digest (daily summary)
+- [ ] Add interview reminder notifications
+- [ ] Browser extension for quick application logging
+- [ ] Resume parsing to auto-detect which version was used
