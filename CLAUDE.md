@@ -32,7 +32,10 @@ Job Radar is a complete job search automation system for Sam Montoya, a Senior/L
 | `src/gmail/parser.py` | Email classification and company extraction |
 | `scripts/run_scan.py` | One-time scan for GitHub Actions |
 | `scripts/reprocess_emails.py` | Re-parse and link existing emails |
+| `scripts/bootstrap.py` | Shared path setup for all scripts |
 | `.github/workflows/job-scan.yml` | GitHub Actions workflow (every 30 min) |
+| `src/collectors/utils.py` | Shared utilities (parse_salary, parse_date, detect_remote) |
+| `dashboard/common.py` | Shared dashboard initialization (path setup, init_db) |
 
 ## Running the Project
 
@@ -80,6 +83,24 @@ For cloud deployment, GitHub Actions runs the scanner every 30 minutes with Supa
 The workflow is at `.github/workflows/job-scan.yml`. Gmail import is disabled in CI (requires OAuth).
 
 **Storage optimization:** Job descriptions truncated to 2,000 chars. Jobs older than 60 days auto-deleted (except applied/saved).
+
+### GitHub Repository
+
+**URL:** https://github.com/smontoya86/job-radar (public)
+
+**Secrets required for GitHub Actions:**
+- `DATABASE_URL` - Supabase PostgreSQL connection string
+- `SLACK_WEBHOOK_URL` - Slack webhook URL
+
+**Files excluded from repo (in .gitignore):**
+- `.env` - Environment secrets
+- `credentials.json` / `token.json` - Gmail OAuth
+- `job_radar.db` - Local database
+- `config/profile.yaml` - Personal job search profile
+- `launchd/com.sammontoya.jobradar.plist` - Personal launchd config
+
+**Template files provided:**
+- `.env.example`, `config/profile.yaml.example`, `launchd/com.jobradar.plist.example`
 
 ## Common Issues & Solutions
 
@@ -203,6 +224,20 @@ print('OK')
 ### Streamlit
 15. **Module caching issues** - Streamlit caches imported modules. When adding new methods to existing classes, must fully restart Streamlit (Ctrl+C and restart), not just reload. Clear `__pycache__` if issues persist
 16. **Background tasks for dashboard** - Use `run_in_background=true` when starting Streamlit from scripts to avoid blocking
+17. **Path setup required before imports** - Streamlit pages need `sys.path.insert()` before importing from `dashboard.common` because Streamlit doesn't run from project root
+
+### Refactoring & Code Quality
+18. **Extract shared utilities** - Common patterns (salary parsing, date parsing, remote detection) were duplicated across 5+ collectors. Extracted to `src/collectors/utils.py`
+19. **Bootstrap modules for scripts** - All scripts had identical 5-line path setup. Extracted to `scripts/bootstrap.py`
+20. **Dashboard common module** - All dashboard pages had identical init code. Extracted to `dashboard/common.py` (calls `init_db()` on import)
+21. **Deprecation warnings are breaking changes** - Streamlit's `use_container_width` deprecation will break after 2025-12-31. Fix early with `width="stretch"`
+22. **datetime.utcnow() deprecated** - Use `datetime.now(timezone.utc)` instead
+
+### GitHub & Security
+23. **GitHub secret scanning** - Push protection blocks webhook URLs even in docs. Use clearly fake placeholders like `TXXXXX/BXXXXX/your-webhook-token`
+24. **gitignore before first commit** - Add sensitive files to .gitignore BEFORE staging, or use `git rm --cached` to unstage
+25. **Template files for config** - Create `.example` versions of config files with placeholder values for public repos
+26. **Home directory git repos** - Check for `.git` in parent directories; can cause git to track unintended files
 
 ## Application Statuses
 
