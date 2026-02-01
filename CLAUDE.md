@@ -39,6 +39,7 @@ Job Radar is a complete job search automation system for Sam Montoya, a Senior/L
 | `docker-compose.yml` | Docker service orchestration |
 | `docker-start.sh` | Easy Docker start script |
 | `docker-stop.sh` | Easy Docker stop script |
+| `docs/ARCHITECTURE.md` | System architecture documentation |
 
 ## Running the Project
 
@@ -278,6 +279,16 @@ print('OK')
 24. **gitignore before first commit** - Add sensitive files to .gitignore BEFORE staging, or use `git rm --cached` to unstage
 25. **Template files for config** - Create `.example` versions of config files with placeholder values for public repos
 26. **Home directory git repos** - Check for `.git` in parent directories; can cause git to track unintended files
+
+### Docker
+27. **Port conflicts** - Stop local services before starting Docker (e.g., local Streamlit on 8501 blocks Docker dashboard)
+28. **Data persistence** - Mount volumes for database (`./data`) so data survives container restarts
+29. **Optional file mounts** - Use `touch` to create empty placeholder files for optional mounts (credentials.json, token.json) to avoid mount errors
+30. **Health checks** - Use Python urllib instead of curl for health checks (smaller image, no extra install)
+31. **Unbuffered Python in Docker** - Use `python -u` flag in container commands for real-time log output
+
+### Documentation
+32. **Single source of truth** - Keep only one ARCHITECTURE.md (in docs/). Duplicates drift out of sync (e.g., old vs new scoring algorithm)
 
 ## Application Statuses
 

@@ -24,21 +24,17 @@ Job Radar is a two-part system designed to automate job discovery and applicatio
 │  │ • Wellfound │    │             │    │             │    │             │  │
 │  └─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘  │
 │         │                  │                  │                  │         │
-│         │                  │                  │                  │         │
 │         ▼                  ▼                  ▼                  ▼         │
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
 │  │                         SQLite DATABASE                             │   │
 │  │  ┌─────────┐  ┌──────────────┐  ┌─────────┐  ┌────────────────┐    │   │
 │  │  │  Jobs   │  │ Applications │  │ Resumes │  │ Email Imports  │    │   │
 │  │  └─────────┘  └──────────────┘  └─────────┘  └────────────────┘    │   │
-│  │                      │                              ▲               │   │
-│  │                      │                              │               │   │
-│  └──────────────────────┼──────────────────────────────┼───────────────┘   │
-│                         │                              │                   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                         │                              ▲                   │
 ├─────────────────────────┼──────────────────────────────┼───────────────────┤
 │                         │    APPLICATION TRACKER       │                   │
 ├─────────────────────────┼──────────────────────────────┼───────────────────┤
-│                         │                              │                   │
 │                         ▼                              │                   │
 │  ┌─────────────────────────────────────────────────────┼───────────────┐   │
 │  │                    STREAMLIT DASHBOARD              │               │   │
@@ -48,7 +44,6 @@ Job Radar is a two-part system designed to automate job discovery and applicatio
 │  │  └─────────┘  └──────────────┘  └──────────┘  └──────────┘        │   │
 │  └────────────────────────────────────────────────────────────────────┘   │
 │                                                        ▲                   │
-│                                                        │                   │
 │  ┌─────────────────────────────────────────────────────┴───────────────┐   │
 │  │                      GMAIL INTEGRATION                              │   │
 │  │  ┌─────────────┐    ┌─────────────┐    ┌─────────────────────────┐ │   │
@@ -56,11 +51,87 @@ Job Radar is a two-part system designed to automate job discovery and applicatio
 │  │  │   Auth      │    │             │    │   • Confirmations       │ │   │
 │  │  └─────────────┘    │ Search for  │    │   • Rejections          │ │   │
 │  │                     │ job emails  │    │   • Interview invites   │ │   │
-│  │                     └─────────────┘    │   • Offers              │ │   │
-│  │                                        └─────────────────────────┘ │   │
+│  │                     └─────────────┘    └─────────────────────────┘ │   │
 │  └─────────────────────────────────────────────────────────────────────┘   │
-│                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Directory Structure
+
+```
+job-radar/
+├── config/
+│   ├── settings.py          # Pydantic settings (env vars)
+│   └── profile.yaml         # Job search criteria
+│
+├── src/
+│   ├── main.py              # Scheduler entry point
+│   │
+│   ├── collectors/          # Job source modules
+│   │   ├── base.py          # BaseCollector, JobData dataclass
+│   │   ├── utils.py         # Shared utilities (parse_salary, parse_date, etc.)
+│   │   ├── jobspy_collector.py
+│   │   ├── remoteok_collector.py
+│   │   ├── adzuna_collector.py
+│   │   ├── greenhouse_collector.py
+│   │   ├── lever_collector.py
+│   │   ├── hn_collector.py
+│   │   └── wellfound_collector.py
+│   │
+│   ├── matching/
+│   │   ├── keyword_matcher.py  # Description-centric scoring (v2)
+│   │   └── scorer.py           # Orchestrates matching + dedup
+│   │
+│   ├── dedup/
+│   │   └── deduplicator.py     # Fingerprint-based deduplication
+│   │
+│   ├── notifications/
+│   │   └── slack_notifier.py
+│   │
+│   ├── persistence/
+│   │   ├── models.py           # SQLAlchemy models
+│   │   ├── database.py         # Session management
+│   │   └── cleanup.py          # Data retention (60-day cleanup)
+│   │
+│   ├── gmail/
+│   │   ├── auth.py             # OAuth2 setup
+│   │   ├── client.py           # Gmail API wrapper
+│   │   └── parser.py           # Parse application emails
+│   │
+│   ├── tracking/
+│   │   ├── application_service.py
+│   │   └── resume_service.py
+│   │
+│   └── analytics/
+│       ├── funnel.py
+│       ├── source_analysis.py
+│       └── resume_analysis.py
+│
+├── dashboard/
+│   ├── app.py                  # Streamlit entry point
+│   ├── common.py               # Shared initialization
+│   └── pages/
+│       ├── 1_jobs.py           # New job matches
+│       ├── 2_applications.py   # Application tracker
+│       ├── 3_pipeline.py       # Kanban board
+│       ├── 4_analytics.py      # Charts
+│       └── 5_rejection_analysis.py
+│
+├── scripts/
+│   ├── bootstrap.py            # Shared path setup
+│   ├── run_scan.py             # One-time scan (for CI)
+│   ├── setup_gmail.py          # Gmail OAuth setup
+│   ├── setup_slack.py          # Test Slack webhook
+│   └── reprocess_emails.py     # Re-parse emails
+│
+├── launchd/
+│   └── com.jobradar.plist.example
+│
+├── data/                       # Docker database volume
+├── logs/
+└── tests/
 ```
 
 ---
@@ -73,70 +144,78 @@ Each collector implements the `BaseCollector` interface:
 
 ```python
 class BaseCollector(ABC):
+    name: str  # Unique identifier for this source
+
     @abstractmethod
     async def collect(self, search_queries: list[str]) -> list[JobData]:
         pass
 ```
 
-| Collector | Source | Method | Rate Limits | Notes |
-|-----------|--------|--------|-------------|-------|
-| `JobSpyCollector` | Indeed, LinkedIn, Glassdoor | Web scraping via python-jobspy | Moderate | Primary source, most jobs |
-| `RemoteOKCollector` | remoteok.com | Public API | Low | Remote-only, no auth needed |
-| `GreenhouseCollector` | Greenhouse boards | Public API | Low | 20+ tech companies configured |
-| `LeverCollector` | Lever boards | Public API | Low | 20+ startups configured |
-| `HNCollector` | Hacker News | API + scraping | Very low | Monthly "Who's Hiring" thread |
-| `AdzunaCollector` | Adzuna | API (requires key) | Medium | Optional, needs signup |
-| `WellfoundCollector` | Wellfound/AngelList | Web scraping | High | Startup jobs, rate limited |
+| Collector | Source | Method | Notes |
+|-----------|--------|--------|-------|
+| `JobSpyCollector` | Indeed, LinkedIn, Glassdoor, Google | python-jobspy | Primary source |
+| `RemoteOKCollector` | remoteok.com | Public API | Remote-only jobs |
+| `GreenhouseCollector` | Greenhouse boards | Public API | 20+ tech companies |
+| `LeverCollector` | Lever boards | Public API | 20+ startups |
+| `HNCollector` | Hacker News | Algolia API | Monthly "Who's Hiring" |
+| `AdzunaCollector` | Adzuna | API (key required) | Optional |
+| `WellfoundCollector` | Wellfound/AngelList | Web scraping | Startup jobs |
 
-**Data Flow:**
-```
-Search Queries → Collector → Raw Jobs → JobData objects
-```
-
-### 2. Matching & Scoring (`src/matching/`)
-
-**KeywordMatcher** loads your profile and matches jobs:
-
-```
-profile.yaml
-    │
-    ▼
-┌───────────────────────────────────────────────────────────┐
-│                    KeywordMatcher                         │
-│  ┌─────────────────┐  ┌─────────────────┐                │
-│  │ Primary Keywords│  │Secondary Keywords│                │
-│  │ (must have 1+)  │  │ (bonus points)   │                │
-│  │ • AI            │  │ • product manager│                │
-│  │ • ML            │  │ • agentic        │                │
-│  │ • search        │  │ • RAG            │                │
-│  │ • personalization│ │ • NLP            │                │
-│  └─────────────────┘  └─────────────────┘                │
-│                                                           │
-│  ┌─────────────────┐  ┌─────────────────┐                │
-│  │Negative Keywords│  │ Company Tiers   │                │
-│  │ (exclude)       │  │                 │                │
-│  │ • junior        │  │ Tier 1: OpenAI  │                │
-│  │ • intern        │  │ Tier 2: Stripe  │                │
-│  │ • contract      │  │ Tier 3: Spotify │                │
-│  └─────────────────┘  └─────────────────┘                │
-└───────────────────────────────────────────────────────────┘
+**JobData Schema:**
+```python
+@dataclass
+class JobData:
+    title: str
+    company: str
+    url: str
+    source: str
+    location: Optional[str] = None
+    description: Optional[str] = None
+    salary_min: Optional[int] = None
+    salary_max: Optional[int] = None
+    apply_url: Optional[str] = None
+    remote: bool = False
+    posted_date: Optional[datetime] = None
+    extra_data: dict = field(default_factory=dict)
 ```
 
-**Scoring Algorithm:**
+**Collector-Specific Notes:**
 
-| Component | Weight | Calculation |
+- **Greenhouse**: List endpoint does NOT include descriptions. Must fetch each job individually. Returns HTML-encoded content - decode with `html.unescape()` before BeautifulSoup.
+- **Lever**: Returns full job data including description. May include HTML - strip with BeautifulSoup.
+- **HN**: Scrapes monthly "Who is hiring?" threads via HN Algolia API.
+
+---
+
+### 2. Matching Algorithm (Description-Centric v2)
+
+Located in `src/matching/keyword_matcher.py`
+
+**Philosophy:** Job titles can be misleading. A "Staff Product Manager" with an AI/ML-heavy description is more relevant than an "AI Product Manager" with a generic description.
+
+**Scoring Weights:**
+
+| Component | Weight | Description |
 |-----------|--------|-------------|
-| Title Match | 35% | Binary - does title match target titles? |
-| Keyword Match | 30% | (primary_matches/total_primary × 0.7) + (secondary_matches/total_secondary × 0.3) |
-| Company Tier | 15% | Tier 1 = 100%, Tier 2 = 66%, Tier 3 = 33% |
-| Salary Match | 10% | Binary - does salary overlap with range? |
-| Remote Match | 10% | Binary - is remote if remote_only preference? |
+| Description Keywords | 40% | Primary focus - keywords in job description |
+| Title Relevance | 20% | Exact match or partial credit for related titles |
+| Keyword Variety | 15% | More unique keywords = more relevant |
+| Company Tier | 15% | Tier 1 (100%), Tier 2 (70%), Tier 3 (40%) |
+| Salary/Remote | 10% | 5% each for matching preferences |
+
+**Match Criteria:** A job matches if ANY of these are true:
+1. Primary keywords found in description
+2. Primary keywords found in title
+3. Exact title match from target_titles
+4. Company is in target_companies list
 
 **Score Thresholds:**
-- 80+ = 🔥 Excellent Match
-- 60-79 = ✨ Good Match
-- 30-59 = 📋 Potential Match
-- <30 = Not shown
+- 80+ = Excellent Match
+- 60-79 = Good Match
+- 30-59 = Potential Match
+- <30 = Not saved
+
+---
 
 ### 3. Deduplication (`src/dedup/`)
 
@@ -144,43 +223,18 @@ Prevents seeing the same job multiple times:
 
 ```
 Job → Generate Fingerprint → Check Database → New? → Save
-                │
-                ▼
-        fingerprint = normalize(company) + ":" + normalize(title)
 
-        Example: "stripe:senior ai product manager"
+fingerprint = normalize(company) + ":" + normalize(title)
+Example: "stripe:senior ai product manager"
 ```
 
 - 30-day lookback window
 - Fingerprints stored in SQLite
 - Batch dedup within same scan
 
-### 4. Notifications (`src/notifications/`)
+---
 
-Slack webhook integration:
-
-```
-Scored Jobs (60+) → Format Message → POST to Webhook → Slack Channel
-```
-
-**Message Format:**
-```
-┌────────────────────────────────────────┐
-│ 🔥 Excellent Match: 85/100             │
-├────────────────────────────────────────┤
-│ Senior AI Product Manager              │
-│ Stripe ⭐⭐⭐                           │
-├────────────────────────────────────────┤
-│ Location: Remote 🏠                    │
-│ Salary: $180,000 - $220,000           │
-│ Source: linkedin                       │
-│ Keywords: AI, ML, search, personalization│
-├────────────────────────────────────────┤
-│ [Apply Now]  [View Job]                │
-└────────────────────────────────────────┘
-```
-
-### 5. Database Schema (`src/persistence/`)
+### 4. Database Schema
 
 ```
 ┌─────────────────┐     ┌─────────────────┐
@@ -191,61 +245,56 @@ Scored Jobs (60+) → Format Message → POST to Webhook → Slack Channel
 │ company         │     │ version         │
 │ location        │     │ file_path       │
 │ description     │     │ target_roles    │
-│ salary_min/max  │     │ key_changes     │
-│ url             │     │ is_active       │
-│ source          │     │ created_at      │
-│ remote          │     └────────┬────────┘
+│ salary_min/max  │     │ is_active       │
+│ url             │     └────────┬────────┘
+│ source          │              │
+│ remote          │              │
 │ match_score     │              │
-│ matched_keywords│              │
 │ fingerprint     │              │
 │ status          │              │
-│ discovered_at   │              │
-│ notified_at     │              │
 └────────┬────────┘              │
          │                       │
          │    ┌──────────────────┴──────────────────┐
          │    │           Applications              │
          │    ├─────────────────────────────────────┤
          └───▶│ id (PK)                             │
-              │ job_id (FK) ─────────────────────────┘
-              │ resume_id (FK) ──────────────────────┘
+              │ job_id (FK)                         │
+              │ resume_id (FK)                      │
               │ company, position                   │
-              │ applied_date                        │
-              │ source                              │
-              │ status                              │
+              │ applied_date, status                │
               │ interview_rounds                    │
-              │ rejected_at                         │
-              │ offer_amount                        │
+              │ rejected_at, offer_amount           │
               └────────┬────────────────────────────┘
                        │
          ┌─────────────┴─────────────┐
-         │                           │
          ▼                           ▼
 ┌─────────────────┐     ┌─────────────────┐
 │   Interviews    │     │  EmailImports   │
 ├─────────────────┤     ├─────────────────┤
-│ id (PK)         │     │ id (PK)         │
 │ application_id  │     │ gmail_message_id│
-│ round           │     │ subject         │
-│ type            │     │ from_address    │
+│ round, type     │     │ subject         │
 │ scheduled_at    │     │ email_type      │
-│ interviewers    │     │ application_id  │
-│ outcome         │     │ parsed_data     │
-│ feedback        │     │ processed       │
+│ outcome         │     │ application_id  │
 └─────────────────┘     └─────────────────┘
 ```
 
-### 6. Gmail Integration (`src/gmail/`)
+**Application Status Flow:**
+```
+applied ──▶ phone_screen ──▶ interviewing ──▶ offer ──▶ accepted
+   │              │               │            │
+   └──────────────┴───────────────┴────────────┴──▶ rejected
+   │
+   └──▶ ghosted (no response 2+ weeks)
+   └──▶ withdrawn
+```
+
+---
+
+### 5. Gmail Integration
 
 **Authentication Flow:**
 ```
 credentials.json → OAuth2 Flow → token.json → API Access
-        │                              │
-        │         Browser opens        │
-        │         User authorizes      │
-        ▼              │               ▼
-   Google Cloud    ◀───┘         Stored locally
-   Console                       for reuse
 ```
 
 **Email Classification:**
@@ -253,147 +302,119 @@ credentials.json → OAuth2 Flow → token.json → API Access
 | Type | Detection Patterns |
 |------|-------------------|
 | Confirmation | "thank you for applying", "application received" |
-| Rejection | "after careful consideration", "decided to move forward with other" |
-| Interview | "schedule an interview", "next steps", calendly.com |
+| Rejection | "after careful consideration", "decided to move forward" |
+| Interview | "schedule an interview", calendly.com links |
 | Offer | "pleased to offer", "extend an offer" |
 
-### 7. Analytics (`src/analytics/`)
+---
 
-**Funnel Metrics:**
+## Deployment Options
+
+### Option 1: Docker (Recommended)
+
+```bash
+./docker-start.sh   # Start dashboard + scanner
+./docker-stop.sh    # Stop everything
+
+# Or manually:
+docker compose up -d
+docker compose logs -f
+docker compose down
 ```
-Applied ──────────────────────────────▶ 100% (45)
-   │
-   ▼
-Screening ────────────────────────────▶ 40% (18)
-   │
-   ▼
-Interview ────────────────────────────▶ 18% (8)
-   │
-   ▼
-Offer ────────────────────────────────▶ 4% (2)
+
+**Services:**
+- `dashboard` - Streamlit UI at http://localhost:8501
+- `scanner` - Background job radar
+
+**Data:** Persisted in `./data/job_radar.db`
+
+### Option 2: Local with launchd (macOS)
+
+```bash
+# Copy plist to LaunchAgents
+cp launchd/com.jobradar.plist.example ~/Library/LaunchAgents/com.jobradar.plist
+# Edit paths in plist
+
+# Load/start
+launchctl load ~/Library/LaunchAgents/com.jobradar.plist
+
+# Unload/stop
+launchctl unload ~/Library/LaunchAgents/com.jobradar.plist
 ```
 
-**Source Analysis:**
-- Response rate by source (LinkedIn, Referral, etc.)
-- Interview conversion rate
-- Best performing channels
+### Option 3: GitHub Actions (Cloud)
 
-**Resume Analysis:**
-- Response rate per resume version
-- A/B comparison between versions
-- Recommendations for which to use
+Runs scanner every 30 minutes with Supabase PostgreSQL. See `.github/workflows/job-scan.yml`.
 
 ---
 
-## Data Flow: Complete Cycle
-
-### Job Discovery Flow
-```
-1. Scheduler triggers (every 30 min)
-           │
-           ▼
-2. Load profile.yaml → Generate search queries
-           │
-           ▼
-3. Run all collectors in parallel
-           │
-           ▼
-4. Score each job against profile
-           │
-           ▼
-5. Deduplicate against database
-           │
-           ▼
-6. Save new jobs to SQLite
-           │
-           ▼
-7. Send Slack notifications (score >= 60)
-```
-
-### Application Tracking Flow
-```
-1. User applies to job (from dashboard or external)
-           │
-           ▼
-2. Create Application record
-           │
-           ▼
-3. Gmail imports confirmations/rejections
-           │
-           ▼
-4. Auto-update application status
-           │
-           ▼
-5. User adds interviews, updates status
-           │
-           ▼
-6. Analytics track funnel progression
-```
-
----
-
-## Scheduler Architecture
-
-Using APScheduler with AsyncIO:
-
-```python
-┌────────────────────────────────────────┐
-│           AsyncIOScheduler             │
-├────────────────────────────────────────┤
-│                                        │
-│  Job: run_job_scan                     │
-│  Interval: 30 minutes                  │
-│  Max Instances: 1                      │
-│                                        │
-│  Job: run_email_import                 │
-│  Interval: 15 minutes                  │
-│  Max Instances: 1                      │
-│                                        │
-└────────────────────────────────────────┘
-```
-
-For production, can run as macOS launchd service:
-```
-~/Library/LaunchAgents/com.sammontoya.jobradar.plist
-    │
-    ├── Runs at login
-    ├── Auto-restarts on crash
-    ├── Logs to logs/jobradar.log
-    └── Background priority
-```
-
----
-
-## Technology Stack Summary
+## Technology Stack
 
 | Layer | Technology | Purpose |
 |-------|------------|---------|
-| Language | Python 3.11+ | Core runtime |
+| Language | Python 3.12 | Core runtime |
 | Web Framework | Streamlit | Dashboard UI |
 | Database | SQLite + SQLAlchemy | Persistence |
 | Scheduler | APScheduler | Background jobs |
 | HTTP Client | aiohttp | Async API calls |
-| Job Scraping | python-jobspy | LinkedIn/Indeed/Glassdoor |
-| Charts | Plotly | Analytics visualization |
+| Job Scraping | python-jobspy | LinkedIn/Indeed/etc |
+| Charts | Plotly | Analytics |
 | Notifications | Slack SDK | Webhook messages |
 | Email | Google API | Gmail integration |
 | Config | Pydantic | Settings validation |
+| Containers | Docker Compose | Deployment |
 
 ---
 
-## Security Considerations
+## Configuration
 
-1. **Credentials Storage**
-   - `.env` file excluded from git
-   - Gmail token.json excluded from git
-   - credentials.json excluded from git
+### profile.yaml
 
-2. **Rate Limiting**
-   - Collectors have built-in delays
-   - Scheduler prevents overlapping runs
-   - Max instances = 1 per job
+```yaml
+target_titles:
+  primary:
+    - "AI Product Manager"
+    - "Senior AI Product Manager"
+  secondary:
+    - "Product Manager, AI"
 
-3. **Data Privacy**
-   - All data stored locally (SQLite)
-   - No external data sharing
-   - Gmail read-only access
+required_keywords:
+  primary:   # Must match at least one
+    - "AI"
+    - "ML"
+    - "search"
+    - "GenAI"
+  secondary: # Bonus points
+    - "product manager"
+    - "agentic"
+
+negative_keywords:  # Auto-reject
+  - "junior"
+  - "intern"
+
+target_companies:
+  tier1: ["OpenAI", "Anthropic", "Google"]
+  tier2: ["Stripe", "Airbnb", "Figma"]
+  tier3: ["Spotify", "Pinterest"]
+
+compensation:
+  min_salary: 185000
+  max_salary: 225000
+```
+
+### .env
+
+```bash
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/XXX/YYY/ZZZ
+GMAIL_CREDENTIALS_FILE=credentials.json
+GMAIL_TOKEN_FILE=token.json
+DATABASE_URL=sqlite:///job_radar.db
+```
+
+---
+
+## Security
+
+1. **Credentials** - `.env`, `credentials.json`, `token.json` excluded from git
+2. **Rate Limiting** - Collectors have built-in delays, scheduler prevents overlapping runs
+3. **Data Privacy** - All data stored locally, no external sharing, Gmail read-only access
