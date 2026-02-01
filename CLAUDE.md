@@ -36,6 +36,9 @@ Job Radar is a complete job search automation system for Sam Montoya, a Senior/L
 | `.github/workflows/job-scan.yml` | GitHub Actions workflow (every 30 min) |
 | `src/collectors/utils.py` | Shared utilities (parse_salary, parse_date, detect_remote) |
 | `dashboard/common.py` | Shared dashboard initialization (path setup, init_db) |
+| `docker-compose.yml` | Docker service orchestration |
+| `docker-start.sh` | Easy Docker start script |
+| `docker-stop.sh` | Easy Docker stop script |
 
 ## Running the Project
 
@@ -70,6 +73,43 @@ tail -f logs/jobradar.log
 ```
 
 The plist is located at `launchd/com.sammontoya.jobradar.plist`. Copy to `~/Library/LaunchAgents/` to enable.
+
+### Docker (Recommended)
+
+Run both the dashboard and scanner in Docker containers:
+
+```bash
+# Start (builds and runs in background)
+./docker-start.sh
+
+# Stop
+./docker-stop.sh
+
+# View logs
+docker compose logs -f
+docker compose logs -f dashboard
+docker compose logs -f scanner
+
+# Restart just one service
+docker compose restart scanner
+```
+
+**Services:**
+- `dashboard` - Streamlit web UI at http://localhost:8501
+- `scanner` - Background job radar (checks every 30 min by default)
+
+**Data persistence:**
+- Database stored in `./data/job_radar.db`
+- Logs stored in `./logs/`
+- Config mounted from `./config/profile.yaml`
+
+**Files:**
+| File | Purpose |
+|------|---------|
+| `Dockerfile` | Container image definition |
+| `docker-compose.yml` | Service orchestration |
+| `docker-start.sh` | Easy start script |
+| `docker-stop.sh` | Easy stop script |
 
 ### GitHub Actions Deployment (Alternative)
 

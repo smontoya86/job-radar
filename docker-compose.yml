@@ -1,0 +1,59 @@
+# Job Radar - Docker Compose Configuration
+#
+# Usage:
+#   Start:  ./docker-start.sh  OR  docker compose up -d
+#   Stop:   ./docker-stop.sh   OR  docker compose down
+#   Logs:   docker compose logs -f
+#   Shell:  docker compose exec dashboard bash
+
+services:
+  # Streamlit Dashboard
+  dashboard:
+    build: .
+    container_name: job-radar-dashboard
+    command: streamlit run dashboard/app.py --server.port=8501 --server.address=0.0.0.0 --browser.gatherUsageStats=false
+    ports:
+      - "${DASHBOARD_PORT:-8501}:8501"
+    volumes:
+      # Persist database
+      - ./data:/app/data
+      # Mount config (create from profile.yaml.example if needed)
+      - ./config/profile.yaml:/app/config/profile.yaml:ro
+      # Mount credentials for Gmail (optional - use empty files if not set up)
+      - ./credentials.json:/app/credentials.json:ro
+      - ./token.json:/app/token.json:ro
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=sqlite:////app/data/job_radar.db
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8501/_stcore/health\")'"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # Background Job Scanner
+  scanner:
+    build: .
+    container_name: job-radar-scanner
+    command: python -u src/main.py
+    volumes:
+      # Share same database
+      - ./data:/app/data
+      # Mount config
+      - ./config/profile.yaml:/app/config/profile.yaml:ro
+      # Mount credentials for Gmail (optional)
+      - ./credentials.json:/app/credentials.json:ro
+      - ./token.json:/app/token.json:ro
+      # Logs
+      - ./logs:/app/logs
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=sqlite:////app/data/job_radar.db
+    restart: unless-stopped
+    depends_on:
+      dashboard:
+        condition: service_healthy

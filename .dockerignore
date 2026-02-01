@@ -1,0 +1,60 @@
+# Virtual environment
+venv/
+env/
+.venv/
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.idea/
+.vscode/
+.cursor/
+*.code-workspace
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Test and coverage
+htmlcov/
+.coverage
+tests/
+
+# Local data (mounted as volumes instead)
+*.db
+*.sqlite
+*.sqlite3
+job_radar.db
+data/
+
+# Logs (mounted as volume)
+logs/
+*.log
+
+# Secrets (mounted as volumes)
+.env
+credentials.json
+token.json
+*.pickle
+
+# Documentation
+*.md
+docs/
+
+# Example files
+*.example
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
