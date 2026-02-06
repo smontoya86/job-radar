@@ -370,7 +370,7 @@ with tab4:
 
                     stmt = select(func.count(Application.id)).where(
                         Application.applied_date < old_threshold,
-                        Application.status.in_(["applied", "screening"]),
+                        Application.status.in_(["applied"]),
                     )
                     possibly_ghosted = session.execute(stmt).scalar() or 0
 

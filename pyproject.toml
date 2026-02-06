@@ -26,6 +26,7 @@ dependencies = [
     "streamlit>=1.30",
     "plotly>=5.18",
     "pandas>=2.0",
+    "altair>=6.0",
 
     # Scraping
     "beautifulsoup4>=4.12",
@@ -34,6 +35,9 @@ dependencies = [
     # Utilities
     "pyyaml>=6.0",
     "python-dateutil>=2.8",
+
+    # Authentication
+    "bcrypt>=4.0",
 ]
 
 [project.optional-dependencies]
@@ -45,7 +49,7 @@ dev = [
 
 [project.scripts]
 job-radar = "src.main:main"
-job-dashboard = "dashboard.app:main"
+job-dashboard = "dashboard.app:cli_main"
 
 [build-system]
 requires = ["hatchling"]

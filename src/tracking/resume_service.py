@@ -159,19 +159,19 @@ class ResumeService:
         result = self.session.execute(stmt)
         status_counts = dict(result.all())
 
-        # Calculate response rate
+        # Calculate response rate (any response including rejections)
         responses = sum(
             status_counts.get(s, 0)
-            for s in ["phone_screen", "interviewing", "offer", "accepted"]
+            for s in ["phone_screen", "interviewing", "offer", "accepted", "rejected"]
         )
-        response_rate = responses / total_applications if total_applications > 0 else 0
+        response_rate = (responses / total_applications * 100) if total_applications > 0 else 0
 
-        # Calculate interview rate
+        # Calculate interview rate (reached interview stage or beyond, not just phone screen)
         interviews = sum(
             status_counts.get(s, 0)
-            for s in ["phone_screen", "interviewing", "offer", "accepted"]
+            for s in ["interviewing", "offer", "accepted"]
         )
-        interview_rate = interviews / total_applications if total_applications > 0 else 0
+        interview_rate = (interviews / total_applications * 100) if total_applications > 0 else 0
 
         return {
             "total_applications": total_applications,

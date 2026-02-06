@@ -4,9 +4,10 @@ This module handles path configuration and database initialization
 that was previously duplicated across all dashboard pages.
 
 Usage:
-    from dashboard.common import get_session
+    from dashboard.common import get_session, sanitize_html
     # init_db() is called automatically on import
 """
+import html
 import sys
 from pathlib import Path
 
@@ -22,5 +23,18 @@ from src.persistence.database import get_session, init_db
 # Initialize database once on module import
 init_db()
 
+
+def sanitize_html(text: str) -> str:
+    """Escape user-supplied text for safe use in st.markdown(unsafe_allow_html=True).
+
+    Converts characters like <, >, &, " to their HTML entity equivalents
+    so that user data (company names, positions, notes) cannot inject
+    scripts or break HTML structure.
+    """
+    if not text:
+        return ""
+    return html.escape(str(text))
+
+
 # Re-export for convenience
-__all__ = ["get_session", "init_db", "settings"]
+__all__ = ["get_session", "init_db", "sanitize_html", "settings"]

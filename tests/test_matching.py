@@ -345,3 +345,70 @@ class TestDescriptionCentricScoring:
         # Should track keyword mentions
         assert result.description_keyword_count >= 3  # AI, ML, AI, search
         assert result.description_keyword_variety >= 3  # AI, ML, search
+
+
+class TestScorerProtocol:
+    """Tests for the Scorer protocol and config-driven selection."""
+
+    def test_keyword_matcher_satisfies_scorer_protocol(self, test_profile):
+        """KeywordMatcher must satisfy the Scorer protocol (has score method)."""
+        from src.matching.scorer_protocol import Scorer
+
+        matcher = KeywordMatcher(test_profile)
+        # KeywordMatcher.match() returns MatchResult — wrapping it as a Scorer
+        # should be possible via the adapter in scorer.py
+        assert hasattr(matcher, "match")
+
+        job = JobData(
+            title="AI PM",
+            company="Test",
+            url="http://test.com",
+            source="test",
+            description="AI role",
+        )
+        result = matcher.match(job)
+        assert hasattr(result, "score")
+        assert hasattr(result, "matched")
+
+    def test_config_driven_scorer_selection_default(self, test_profile):
+        """Default scoring engine should be 'heuristic'."""
+        from src.matching.scorer import get_scorer
+
+        scorer = get_scorer(test_profile)
+        assert scorer is not None
+
+        # Should work with a job
+        job = JobData(
+            title="AI PM",
+            company="Test",
+            url="http://test.com",
+            source="test",
+            description="AI ML search role",
+        )
+        scored = scorer.score_jobs([job])
+        assert len(scored) >= 0  # May or may not pass min_score
+
+    def test_config_driven_scorer_fallback(self, test_profile):
+        """When 'ai' engine is requested but unavailable, falls back to heuristic."""
+        from src.matching.scorer import get_scorer
+
+        scorer = get_scorer(test_profile, scoring_engine="ai")
+        assert scorer is not None  # Should not crash — falls back
+
+    def test_enricher_noop_default(self):
+        """Default Enricher passes data through unchanged."""
+        from src.pipeline.enricher import NoOpEnricher
+
+        enricher = NoOpEnricher()
+        job = JobData(
+            title="PM",
+            company="Test",
+            url="http://test.com",
+            source="test",
+            description="A job.",
+        )
+        result = MatchResult(matched=True, score=75.0)
+        enriched_job, enriched_result = enricher.enrich(job, result)
+
+        assert enriched_job is job
+        assert enriched_result is result

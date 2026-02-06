@@ -1,5 +1,5 @@
 """Database cleanup utilities for storage optimization."""
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 
 from sqlalchemy import delete, select, update
 
@@ -18,7 +18,7 @@ def delete_old_jobs(days: int = 60) -> int:
     Returns:
         Number of jobs deleted
     """
-    cutoff_date = datetime.utcnow() - timedelta(days=days)
+    cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
 
     with get_session() as session:
         # Find jobs to delete:

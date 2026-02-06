@@ -1,12 +1,12 @@
 """Application funnel analytics."""
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from src.persistence.models import Application
+from src.persistence.models import Application, Interview, EmailImport
 
 
 @dataclass
@@ -43,6 +43,15 @@ class FunnelAnalytics:
         ("accepted", "Accepted"),
     ]
 
+    # Map stage names to numeric order for comparison
+    STAGE_ORDER = {
+        "applied": 0,
+        "phone_screen": 1,
+        "interviewing": 2,
+        "offer": 3,
+        "accepted": 4,
+    }
+
     def __init__(self, session: Session):
         """
         Initialize funnel analytics.
@@ -52,6 +61,93 @@ class FunnelAnalytics:
         """
         self.session = session
 
+    def _get_highest_stage(self, app: Application) -> str:
+        """
+        Determine the highest stage an application reached.
+
+        For non-terminal apps, returns current status.
+        For rejected/withdrawn/ghosted apps, uses rejected_at, interview
+        records, and linked interview emails as signals.
+        """
+        terminal_statuses = {"rejected", "withdrawn", "ghosted"}
+
+        if app.status not in terminal_statuses:
+            return app.status
+
+        # Start with current_stage or rejected_at as hints
+        best = "applied"
+
+        # Check rejected_at field (set by update_status when rejecting)
+        if app.rejected_at:
+            ra = app.rejected_at.lower()
+            if ra in self.STAGE_ORDER:
+                best = ra
+            elif ra in ("interview", "final_round", "onsite"):
+                best = "interviewing"
+
+        # Check if the app has Interview records
+        interview_count = (
+            self.session.execute(
+                select(func.count(Interview.id)).where(
+                    Interview.application_id == app.id
+                )
+            ).scalar() or 0
+        )
+        if interview_count > 0:
+            if self.STAGE_ORDER.get(best, 0) < self.STAGE_ORDER["phone_screen"]:
+                best = "phone_screen"
+
+        # Check linked interview_invite emails
+        interview_email_count = (
+            self.session.execute(
+                select(func.count(EmailImport.id)).where(
+                    EmailImport.application_id == app.id,
+                    EmailImport.email_type == "interview_invite",
+                )
+            ).scalar() or 0
+        )
+        if interview_email_count > 0:
+            if self.STAGE_ORDER.get(best, 0) < self.STAGE_ORDER["phone_screen"]:
+                best = "phone_screen"
+
+        # Check current_stage for more specific info
+        if app.current_stage:
+            cs = app.current_stage.lower()
+            if cs in ("phone screen", "recruiter screen", "phone_screen"):
+                if self.STAGE_ORDER.get(best, 0) < self.STAGE_ORDER["phone_screen"]:
+                    best = "phone_screen"
+            elif cs not in ("", "applied"):
+                if self.STAGE_ORDER.get(best, 0) < self.STAGE_ORDER["interviewing"]:
+                    best = "interviewing"
+
+        return best
+
+    def _get_effective_stage_counts(
+        self,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+    ) -> dict[str, int]:
+        """
+        Count applications by their highest stage reached.
+
+        Unlike grouping by current status, this ensures apps rejected after
+        interviewing still count in the interview stage.
+        """
+        stmt = select(Application)
+        if start_date:
+            stmt = stmt.where(Application.applied_date >= start_date)
+        if end_date:
+            stmt = stmt.where(Application.applied_date <= end_date)
+
+        apps = self.session.execute(stmt).scalars().all()
+
+        counts: dict[str, int] = {}
+        for app in apps:
+            stage = self._get_highest_stage(app)
+            counts[stage] = counts.get(stage, 0) + 1
+
+        return counts
+
     def get_funnel(
         self,
         start_date: Optional[datetime] = None,
@@ -60,6 +156,9 @@ class FunnelAnalytics:
         """
         Get funnel data for applications.
 
+        Uses highest stage reached (not current status) so that apps
+        rejected after interviewing still appear in the interview count.
+
         Args:
             start_date: Start of date range
             end_date: End of date range
@@ -67,30 +166,13 @@ class FunnelAnalytics:
         Returns:
             FunnelData with stages
         """
-        # Get counts by status
-        stmt = select(Application.status, func.count(Application.id))
+        stage_counts = self._get_effective_stage_counts(start_date, end_date)
+        total = sum(stage_counts.values())
 
-        if start_date:
-            stmt = stmt.where(Application.applied_date >= start_date)
-        if end_date:
-            stmt = stmt.where(Application.applied_date <= end_date)
-
-        stmt = stmt.group_by(Application.status)
-
-        result = self.session.execute(stmt)
-        status_counts = dict(result.all())
-
-        # Build funnel stages
-        stages: list[FunnelStage] = []
-        total = sum(status_counts.values())
-
-        # For funnel, we need cumulative counts
-        # Each stage includes all applications that reached that stage or beyond
-        cumulative_count = 0
+        # Build stage data
         stage_data = []
-
         for status, name in self.FUNNEL_STAGES:
-            count = status_counts.get(status, 0)
+            count = stage_counts.get(status, 0)
             stage_data.append((status, name, count))
 
         # Calculate cumulative (bottom-up)
@@ -101,6 +183,7 @@ class FunnelAnalytics:
             cumulative[status] = running_total
 
         # Build stages with metrics
+        stages: list[FunnelStage] = []
         prev_count = total
         for status, name in self.FUNNEL_STAGES:
             count = cumulative.get(status, 0)
@@ -154,7 +237,7 @@ class FunnelAnalytics:
         Returns:
             List of {week_start, count} dicts
         """
-        end_date = datetime.utcnow()
+        end_date = datetime.now(timezone.utc)
         start_date = end_date - timedelta(weeks=weeks)
 
         stmt = select(
@@ -246,7 +329,8 @@ class FunnelAnalytics:
         """
         Calculate application to interview rate.
 
-        Interview = reached phone_screen, interviewing, offer, or accepted stage.
+        Uses highest stage reached so that apps rejected after interviewing
+        are still counted.
 
         Args:
             start_date: Start date for calculation
@@ -254,32 +338,17 @@ class FunnelAnalytics:
         Returns:
             Interview rate as percentage
         """
-        # Count total applications
-        stmt = select(func.count(Application.id))
-        if start_date:
-            stmt = stmt.where(Application.applied_date >= start_date)
-        result = self.session.execute(stmt)
-        total = result.scalar() or 0
+        stage_counts = self._get_effective_stage_counts(start_date)
+        total = sum(stage_counts.values())
 
         if total == 0:
             return 0.0
 
-        # Count interviews (reached interview stage or beyond)
-        interview_statuses = [
-            "phone_screen",
-            "interviewing",
-            "offer",
-            "accepted",
-        ]
-
-        stmt = select(func.count(Application.id)).where(
-            Application.status.in_(interview_statuses)
+        # Count apps that reached phone_screen or beyond
+        interview_stages = {"phone_screen", "interviewing", "offer", "accepted"}
+        interviews = sum(
+            stage_counts.get(s, 0) for s in interview_stages
         )
-        if start_date:
-            stmt = stmt.where(Application.applied_date >= start_date)
-
-        result = self.session.execute(stmt)
-        interviews = result.scalar() or 0
 
         return (interviews / total) * 100
 

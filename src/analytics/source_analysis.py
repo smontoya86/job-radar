@@ -1,12 +1,12 @@
 """Source effectiveness analytics."""
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from src.persistence.models import Application
+from src.persistence.models import Application, Interview
 
 
 @dataclass
@@ -75,9 +75,8 @@ class SourceAnalytics:
             ]
             responses = self._count_by_source_status(source, response_statuses, start_date)
 
-            # Get interview count
-            interview_statuses = ["phone_screen", "interviewing", "offer", "accepted"]
-            interviews = self._count_by_source_status(source, interview_statuses, start_date)
+            # Get interview count using Interview records (highest stage reached)
+            interviews = self._count_interviews_by_source(source, start_date)
 
             # Get offer count
             offer_statuses = ["offer", "accepted"]
@@ -100,6 +99,28 @@ class SourceAnalytics:
         stats.sort(key=lambda x: x.response_rate, reverse=True)
 
         return stats
+
+    def _count_interviews_by_source(
+        self,
+        source: str,
+        start_date: Optional[datetime],
+    ) -> int:
+        """Count applications that have Interview records (highest stage reached)."""
+        stmt = (
+            select(func.count(func.distinct(Application.id)))
+            .join(Interview, Interview.application_id == Application.id)
+        )
+
+        if source == "Unknown":
+            stmt = stmt.where(Application.source.is_(None))
+        else:
+            stmt = stmt.where(Application.source == source)
+
+        if start_date:
+            stmt = stmt.where(Application.applied_date >= start_date)
+
+        result = self.session.execute(stmt)
+        return result.scalar() or 0
 
     def _count_by_source_status(
         self,
@@ -188,7 +209,7 @@ class SourceAnalytics:
         """
         from datetime import timedelta
 
-        end_date = datetime.utcnow()
+        end_date = datetime.now(timezone.utc)
         start_date = end_date - timedelta(weeks=weeks)
 
         # Get applications by week

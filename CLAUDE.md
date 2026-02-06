@@ -2,21 +2,21 @@
 
 ## Project Overview
 
-Job Radar is a complete job search automation system for Sam Montoya, a Senior/Lead/Staff AI Product Manager. The system has two main components:
+Job Radar is a complete job search automation system. The system has two main components:
 
 1. **Job Radar** - Background service that monitors job boards, scores matches, and sends Slack alerts
 2. **Application Tracker** - Web dashboard for tracking applications, resumes, interviews, and analytics
 
 ## User Profile
 
-- **Name:** Sam Montoya
-- **Target Roles:** AI Product Manager, Senior/Lead/Staff/Principal PM, Director of Product
-- **Focus Areas:** Search, Discovery, Personalization, Recommendations, GenAI, Agentic AI, LLMs
-- **Salary Range:** $185k-$225k (flexible)
-- **Preference:** Remote
-- **Experience:** 8+ years
-- **Layoff Date:** January 20, 2026
-- **Former Employer:** Weedmaps (laid off)
+Configure your profile in `config/profile.yaml`. Key fields:
+
+- **Name:** (set in profile.yaml)
+- **Target Roles:** (set in profile.yaml)
+- **Focus Areas:** (set in profile.yaml)
+- **Salary Range:** (set in profile.yaml)
+- **Preference:** (set in profile.yaml)
+- **Experience:** (set in profile.yaml)
 
 ## Key Files
 
@@ -30,6 +30,9 @@ Job Radar is a complete job search automation system for Sam Montoya, a Senior/L
 | `src/persistence/cleanup.py` | Data retention (60-day cleanup, description truncation) |
 | `src/analytics/rejection_analysis.py` | Analyze rejected applications for resume gaps |
 | `src/gmail/parser.py` | Email classification and company extraction |
+| `src/onboarding/` | Onboarding wizard for new users |
+| `dashboard/pages/0_setup.py` | Streamlit setup wizard (9-step flow) |
+| `tests/test_onboarding.py` | Onboarding test suite (48 tests) |
 | `scripts/run_scan.py` | One-time scan for GitHub Actions |
 | `scripts/reprocess_emails.py` | Re-parse and link existing emails |
 | `scripts/bootstrap.py` | Shared path setup for all scripts |
@@ -45,7 +48,7 @@ Job Radar is a complete job search automation system for Sam Montoya, a Senior/L
 
 ```bash
 # Always activate venv first
-cd /Users/sammontoya/job-hunt/job-radar
+cd /path/to/job-radar
 source venv/bin/activate
 
 # Run dashboard
@@ -61,10 +64,10 @@ Job Radar runs as a background service via launchd:
 
 ```bash
 # Load service (starts at login)
-launchctl load ~/Library/LaunchAgents/com.sammontoya.jobradar.plist
+launchctl load ~/Library/LaunchAgents/com.jobradar.plist
 
 # Unload service
-launchctl unload ~/Library/LaunchAgents/com.sammontoya.jobradar.plist
+launchctl unload ~/Library/LaunchAgents/com.jobradar.plist
 
 # Check status
 launchctl list | grep jobradar
@@ -73,7 +76,7 @@ launchctl list | grep jobradar
 tail -f logs/jobradar.log
 ```
 
-The plist is located at `launchd/com.sammontoya.jobradar.plist`. Copy to `~/Library/LaunchAgents/` to enable.
+The plist template is at `launchd/com.jobradar.plist.example`. Use `scripts/install_launchd.sh` to install.
 
 ### Docker (Recommended)
 
@@ -127,7 +130,7 @@ The workflow is at `.github/workflows/job-scan.yml`. Gmail import is disabled in
 
 ### GitHub Repository
 
-**URL:** https://github.com/smontoya86/job-radar (public)
+**URL:** https://github.com/YOUR_USERNAME/job-radar
 
 **Secrets required for GitHub Actions:**
 - `DATABASE_URL` - Supabase PostgreSQL connection string
@@ -136,9 +139,9 @@ The workflow is at `.github/workflows/job-scan.yml`. Gmail import is disabled in
 **Files excluded from repo (in .gitignore):**
 - `.env` - Environment secrets
 - `credentials.json` / `token.json` - Gmail OAuth
-- `job_radar.db` - Local database
+- `data/job_radar.db` - Local database
 - `config/profile.yaml` - Personal job search profile
-- `launchd/com.sammontoya.jobradar.plist` - Personal launchd config
+- `launchd/com.jobradar.plist` - Personal launchd config
 
 **Template files provided:**
 - `.env.example`, `config/profile.yaml.example`, `launchd/com.jobradar.plist.example`
@@ -173,11 +176,15 @@ sys.path.insert(0, str(project_root))
 
 ### 5. Database Issues
 **Problem:** Missing tables or schema errors
-**Solution:** `init_db()` is called automatically but can be forced:
+**Solution:** `init_db()` is called automatically and includes auto-migration for missing columns (e.g., `user_id`). Can be forced:
 ```python
 from src.persistence.database import init_db
-init_db()
+init_db()  # Creates tables + runs _migrate_add_user_id_columns()
 ```
+
+### 6. Schema Mismatch After Model Changes
+**Problem:** `OperationalError: no such column` after adding columns to SQLAlchemy models
+**Solution:** `init_db()` includes `_migrate_add_user_id_columns()` which auto-detects and adds missing `user_id` columns via `ALTER TABLE`. For other columns, add similar migration logic to `src/persistence/database.py`
 
 ## Architecture Patterns
 
@@ -208,7 +215,7 @@ print(settings.database_url)
 
 ## Database
 
-- **Location:** `job_radar.db` (SQLite, created in project root)
+- **Location:** `data/job_radar.db` (SQLite, in data/ directory)
 - **ORM:** SQLAlchemy 2.0 with declarative models
 - **Models:** Job, Application, Resume, Interview, EmailImport, StatusHistory
 
@@ -266,29 +273,61 @@ print('OK')
 15. **Module caching issues** - Streamlit caches imported modules. When adding new methods to existing classes, must fully restart Streamlit (Ctrl+C and restart), not just reload. Clear `__pycache__` if issues persist
 16. **Background tasks for dashboard** - Use `run_in_background=true` when starting Streamlit from scripts to avoid blocking
 17. **Path setup required before imports** - Streamlit pages need `sys.path.insert()` before importing from `dashboard.common` because Streamlit doesn't run from project root
+18. **Single-line HTML for st.markdown** - Streamlit's markdown parser treats 4+ space indentation as code blocks. Multi-line indented HTML in f-strings causes `</div>` to leak as visible text. Always use single-line HTML string concatenation for `st.markdown(html, unsafe_allow_html=True)`
 
 ### Refactoring & Code Quality
-18. **Extract shared utilities** - Common patterns (salary parsing, date parsing, remote detection) were duplicated across 5+ collectors. Extracted to `src/collectors/utils.py`
-19. **Bootstrap modules for scripts** - All scripts had identical 5-line path setup. Extracted to `scripts/bootstrap.py`
-20. **Dashboard common module** - All dashboard pages had identical init code. Extracted to `dashboard/common.py` (calls `init_db()` on import)
-21. **Deprecation warnings are breaking changes** - Streamlit's `use_container_width` deprecation will break after 2025-12-31. Fix early with `width="stretch"`
-22. **datetime.utcnow() deprecated** - Use `datetime.now(timezone.utc)` instead
+19. **Extract shared utilities** - Common patterns (salary parsing, date parsing, remote detection) were duplicated across 5+ collectors. Extracted to `src/collectors/utils.py`
+20. **Bootstrap modules for scripts** - All scripts had identical 5-line path setup. Extracted to `scripts/bootstrap.py`
+21. **Dashboard common module** - All dashboard pages had identical init code. Extracted to `dashboard/common.py` (calls `init_db()` on import)
+22. **Deprecation warnings are breaking changes** - Streamlit's `use_container_width` deprecation will break after 2025-12-31. Fix early with `width="stretch"`
+23. **datetime.utcnow() deprecated** - Use `datetime.now(timezone.utc)` instead
 
 ### GitHub & Security
-23. **GitHub secret scanning** - Push protection blocks webhook URLs even in docs. Use clearly fake placeholders like `TXXXXX/BXXXXX/your-webhook-token`
-24. **gitignore before first commit** - Add sensitive files to .gitignore BEFORE staging, or use `git rm --cached` to unstage
-25. **Template files for config** - Create `.example` versions of config files with placeholder values for public repos
-26. **Home directory git repos** - Check for `.git` in parent directories; can cause git to track unintended files
+24. **GitHub secret scanning** - Push protection blocks webhook URLs even in docs. Use clearly fake placeholders like `TXXXXX/BXXXXX/your-webhook-token`
+25. **gitignore before first commit** - Add sensitive files to .gitignore BEFORE staging, or use `git rm --cached` to unstage
+26. **Template files for config** - Create `.example` versions of config files with placeholder values for public repos
+27. **Home directory git repos** - Check for `.git` in parent directories; can cause git to track unintended files
 
 ### Docker
-27. **Port conflicts** - Stop local services before starting Docker (e.g., local Streamlit on 8501 blocks Docker dashboard)
-28. **Data persistence** - Mount volumes for database (`./data`) so data survives container restarts
-29. **Optional file mounts** - Use `touch` to create empty placeholder files for optional mounts (credentials.json, token.json) to avoid mount errors
-30. **Health checks** - Use Python urllib instead of curl for health checks (smaller image, no extra install)
-31. **Unbuffered Python in Docker** - Use `python -u` flag in container commands for real-time log output
+28. **Port conflicts** - Stop local services before starting Docker (e.g., local Streamlit on 8501 blocks Docker dashboard)
+29. **Data persistence** - Mount volumes for database (`./data`) so data survives container restarts
+30. **Optional file mounts** - Use `touch` to create empty placeholder files for optional mounts (credentials.json, token.json) to avoid mount errors
+31. **Health checks** - Use Python urllib instead of curl for health checks (smaller image, no extra install)
+32. **Unbuffered Python in Docker** - Use `python -u` flag in container commands for real-time log output
+33. **Mount .env file, don't just use env_file** - `env_file: .env` in docker-compose injects env vars into the container but does NOT mount the file. If code checks for the `.env` file on disk (e.g., `config_checker.is_configured()`), add `- ./.env:/app/.env:ro` as a volume mount
+34. **Single database source of truth** - Don't override `DATABASE_URL` in docker-compose `environment:` block. Let it use the value from `.env` so Docker and local dev share the same DB via volume mount (`./data:/app/data`)
+35. **NEVER run `docker system prune -af`** - It wipes ALL Docker containers/images/volumes across every project. Only clean up the specific project: `docker compose down --rmi local` or `docker rmi <specific-image>`
 
 ### Documentation
-32. **Single source of truth** - Keep only one ARCHITECTURE.md (in docs/). Duplicates drift out of sync (e.g., old vs new scoring algorithm)
+35. **Single source of truth** - Keep only one ARCHITECTURE.md (in docs/). Duplicates drift out of sync (e.g., old vs new scoring algorithm)
+
+### Testing
+36. **Test what the code actually does** - When writing tests, verify behavior matches implementation, not assumptions. Test validation rules as they exist in the code, not how you think they should work
+37. **Pre-existing tests may be wrong** - When adding tests causes seemingly unrelated tests to fail, the pre-existing tests may have bugs or outdated assumptions. Investigate before blindly "fixing"
+38. **Test realistic patterns** - Email parser tests should use actual phrases from real emails. Patterns like "we'd like to" may not match "we would like to" - use explicit alternations
+
+### Email Parser Patterns
+39. **Contractions vs full words** - Regex `we.?d like` only matches "we'd" not "we would". Use explicit patterns: `(we'd|we would) like to`
+40. **Weak signals need context** - "next steps" alone is too broad. Add context: `next steps.{0,10}(in |for )?(the |your )?(hiring|interview)`
+41. **Test with real email examples** - Interview invites vary widely: scheduling links, explicit phrases, or soft language. Test with actual email subjects
+
+### Rate Limiting
+42. **Rate limiting patterns** - Use asyncio Semaphore for concurrency + random delays to avoid bot detection. Pattern: `semaphore = asyncio.Semaphore(max_concurrent)` with `await asyncio.sleep(random.uniform(min, max))`
+43. **Delay between collectors** - Add delays between different job source collectors, not just within each collector. Sites may share detection infrastructure
+
+## Analytics - Effective Stage Logic
+
+The funnel analytics (`src/analytics/funnel.py`) use **highest stage reached** instead of current status. This prevents apps rejected after interviewing from vanishing from the interview count.
+
+**How `_get_highest_stage()` determines effective stage:**
+1. Non-terminal statuses (applied, phone_screen, interviewing, offer, accepted) → use as-is
+2. Terminal statuses (rejected, withdrawn, ghosted) → check multiple signals:
+   - `rejected_at` field (records the stage at rejection)
+   - Linked `Interview` records → at least `phone_screen`
+   - Linked `interview_invite` emails → at least `phone_screen`
+   - `current_stage` field → map to appropriate stage
+
+**Email→Interview creation:** When `_update_from_email()` processes an `INTERVIEW_INVITE` email, it now calls `add_interview()` to create an Interview record (auto-incrementing rounds, updating status and current_stage). Interview type is inferred from subject/position keywords.
 
 ## Application Statuses
 
@@ -330,6 +369,24 @@ Tracked interview types for analytics:
 
 The key insight: A "Staff PM" role with AI/ML-heavy description should score higher than an "AI PM" with a generic description.
 
+## Onboarding System
+
+The onboarding system (`src/onboarding/`) helps new users configure Job Radar:
+
+| File | Purpose |
+|------|---------|
+| `validators.py` | Pydantic models for profile.yaml validation |
+| `profile_builder.py` | Fluent builder pattern for creating profiles |
+| `config_writer.py` | Writes profile.yaml and .env files |
+| `config_checker.py` | First-run detection (`is_configured()`) |
+
+**Setup Wizard** (`dashboard/pages/0_setup.py`):
+9-step wizard flow: Welcome → Basic Info → Job Titles → Keywords → Salary → Location → Companies → Notifications → Review & Save
+
+**Auto-detection:**
+- `src/main.py` checks `is_configured()` before starting
+- `dashboard/app.py` shows setup prompt if not configured
+
 ## Future Improvements
 
 - [ ] Add more Greenhouse/Lever companies to default lists
@@ -337,3 +394,105 @@ The key insight: A "Staff PM" role with AI/ML-heavy description should score hig
 - [ ] Add interview reminder notifications
 - [ ] Browser extension for quick application logging
 - [ ] Resume parsing to auto-detect which version was used
+
+---
+
+## Internal / Private — Future Features Roadmap
+
+> This section is internal planning only. Do NOT include any of this in public-facing docs (README, ARCHITECTURE.md, SETUP_GUIDE.md, CONTRIBUTING.md).
+
+### Contact/Recruiter CRM
+- **Option A (Preferred):** Airtable or Notion integration (free tier) — store recruiter contacts, follow-up dates, notes
+- **Option B:** Custom in-app CRM — Contact model, linked to Applications, follow-up reminders
+
+### Resume-to-JD Match Scoring
+- Reuse SKILL_PATTERNS from rejection_analysis.py
+- PDF/DOCX parsing of uploaded resume
+- Match % + gap report against specific job descriptions
+- Show "Your resume matches 72% of this JD — missing: Kubernetes, distributed systems"
+
+### Interview Prep Tools
+- **Option A:** LLM-powered — generate STAR answers from JD + resume context
+- **Option B:** Template-based — extract top keywords from JD, generate question prompts
+
+### Follow-up Reminders
+- "Follow up by" date field on Application model
+- Slack/in-app reminders when date arrives
+- Auto-suggest follow-up timing (e.g., 1 week after application, 3 days after interview)
+
+### Email Digest
+- Scheduled task compiling new matches + status changes
+- Weekly or daily frequency
+- Uses existing email infrastructure
+
+### Activity Timeline
+- Surface StatusHistory as visual timeline on application detail view
+- Show status changes, interview additions, email imports in chronological order
+
+### CSV Export
+- `st.download_button` on Applications and Jobs pages
+- Export filtered data as CSV for spreadsheet analysis
+
+### Keyword Highlighting
+- Highlight matched keywords in job description view
+- Show which keywords from profile appeared in each job
+
+### Mobile-Responsive UI
+- CSS breakpoints for mobile viewport
+- Conditional column counts in dashboard pages
+- Touch-friendly interview/status buttons
+
+### Multi-User Transition
+**What exists now:**
+- User model with email, username, password_hash, google_id
+- UserProfile model with JSON job search criteria
+- user_id columns on all data tables (nullable)
+- AuthService with registration, login, OAuth, password reset
+- Data isolation tests in tests/security/test_data_isolation.py
+
+**What's needed:**
+- Login UI (Streamlit auth page or external OAuth flow)
+- Query filtering by user_id throughout all services
+- Per-user profile.yaml replacement (use UserProfile model instead)
+- Per-user Gmail tokens (encrypted in UserProfile.gmail_token)
+- Admin dashboard for user management
+- Billing/tier enforcement
+
+### Compliant Collector Transition
+**Goal:** Replace high-risk scrapers (JobSpy/Wellfound) with legal data sources.
+
+**Current risk:**
+| Collector | Risk | Action |
+|-----------|------|--------|
+| JobSpy (Indeed/LinkedIn/Glassdoor) | HIGH | Replace with SerpApi + JSearch |
+| Wellfound | HIGH | Replace with email alerts |
+| RemoteOK, Greenhouse, Lever, HN, Adzuna | LOW | Keep |
+
+**New collectors planned:**
+- **SerpApi** — Google Jobs API (~$50/mo for 5K searches), covers Indeed/LinkedIn/Glassdoor through Google's index
+- **JSearch** — RapidAPI aggregator (free tier: 500 req/mo)
+- **Ashby** — Public ATS API (growing startup ATS)
+- **Workday** — Public career site API (large enterprises)
+- **SmartRecruiters** — Public job postings API
+- **Email Alert Parser** — Parse LinkedIn/Google/Indeed job alert emails
+- **Search Discovery** — SerpApi `site:` queries to discover new ATS boards
+
+**AlertParser protocol design:**
+```python
+class AlertParser(Protocol):
+    def parse(self, email_html: str) -> list[JobData]: ...
+```
+- Heuristic implementation first (regex/BeautifulSoup)
+- LLM implementation later (same interface, better extraction)
+
+### Scorer Protocol (AI Readiness)
+**Implemented:**
+- `Scorer` protocol in `src/matching/scorer_protocol.py`
+- `scoring_engine` config in settings.py (heuristic/ai/hybrid)
+- `get_scorer()` factory in scorer.py with graceful fallback
+- `Enricher` protocol in `src/pipeline/enricher.py` with NoOpEnricher
+
+**Future AI implementations:**
+- `SemanticScorer` — embedding-based job matching using sentence transformers
+- `HybridScorer` — combine heuristic + semantic scores
+- `AIEnricher` — LLM-generated job summaries, relevance explanations

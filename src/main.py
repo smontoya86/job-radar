@@ -1,7 +1,8 @@
 """Main entry point for Job Radar scheduler."""
 import asyncio
+import random
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Add project root to path
@@ -14,12 +15,16 @@ from apscheduler.triggers.interval import IntervalTrigger
 from config.settings import settings
 from src.collectors import (
     AdzunaCollector,
+    AshbyCollector,
     GreenhouseCollector,
     HNCollector,
-    JobSpyCollector,
+    JSearchCollector,
     LeverCollector,
     RemoteOKCollector,
-    WellfoundCollector,
+    SearchDiscoveryCollector,
+    SerpApiCollector,
+    SmartRecruitersCollector,
+    WorkdayCollector,
 )
 from src.dedup.deduplicator import Deduplicator
 from src.matching.keyword_matcher import KeywordMatcher
@@ -28,6 +33,7 @@ from src.notifications.slack_notifier import SlackNotifier
 from src.persistence.database import get_session, init_db
 from src.persistence.models import Job
 from src.persistence.cleanup import cleanup_stale_data
+from src.onboarding.config_checker import is_configured, get_missing_config
 
 # Maximum description length to store (for storage optimization)
 MAX_DESCRIPTION_LENGTH = 2000
@@ -51,35 +57,61 @@ async def run_job_scan():
     search_queries = matcher.get_search_queries()
     print(f"Search queries: {search_queries[:5]}...")
 
-    # Initialize collectors
+    # Initialize collectors — all compliant, API-based sources
     collectors = [
-        JobSpyCollector(sites=["indeed", "linkedin", "glassdoor", "google"], results_wanted=30),
         RemoteOKCollector(),
-        WellfoundCollector(),  # Startup jobs
         GreenhouseCollector(),
         LeverCollector(),
+        AshbyCollector(),
+        HNCollector(),
     ]
 
-    # Add optional collectors
-    if settings.adzuna_app_id and settings.adzuna_app_key:
+    # Add optional API-key collectors (skip if placeholder credentials)
+    adzuna_placeholders = {"your_id", "your_key", "", None}
+    if (settings.adzuna_app_id not in adzuna_placeholders and
+        settings.adzuna_app_key not in adzuna_placeholders):
         collectors.append(
             AdzunaCollector(
                 app_id=settings.adzuna_app_id,
                 app_key=settings.adzuna_app_key,
             )
         )
+    else:
+        print("Adzuna credentials not configured, skipping collector")
 
-    # Add HN collector (runs monthly anyway)
-    collectors.append(HNCollector())
+    serpapi_placeholders = {"your_key", "", None}
+    if settings.serpapi_key not in serpapi_placeholders:
+        collectors.append(SerpApiCollector(api_key=settings.serpapi_key))
+        collectors.append(SearchDiscoveryCollector(api_key=settings.serpapi_key))
+    else:
+        print("SerpApi key not configured, skipping SerpApi + Search Discovery")
 
-    # Collect jobs from all sources
+    jsearch_placeholders = {"your_key", "", None}
+    if settings.jsearch_api_key not in jsearch_placeholders:
+        collectors.append(JSearchCollector(api_key=settings.jsearch_api_key))
+    else:
+        print("JSearch API key not configured, skipping collector")
+
+    # ATS board collectors (no API key needed)
+    collectors.append(WorkdayCollector())
+    collectors.append(SmartRecruitersCollector())
+
+    # Collect jobs from all sources with rate limiting
     all_jobs = []
-    for collector in collectors:
+    for i, collector in enumerate(collectors):
         try:
             print(f"Collecting from {collector.name}...")
             jobs = await collector.collect(search_queries)
             print(f"  Found {len(jobs)} jobs from {collector.name}")
             all_jobs.extend(jobs)
+
+            # Rate limiting: wait between collectors to avoid detection
+            # Skip delay after the last collector
+            if i < len(collectors) - 1:
+                delay = random.uniform(5.0, 15.0)
+                print(f"  Rate limit: waiting {delay:.1f}s before next collector...")
+                await asyncio.sleep(delay)
+
         except Exception as e:
             print(f"  Error collecting from {collector.name}: {e}")
 
@@ -144,7 +176,7 @@ async def run_job_scan():
         print("\nSending Slack notifications...")
         notifier = SlackNotifier(
             webhook_url=settings.slack_webhook_url,
-            min_score=60,
+            min_score=50,  # Lowered from 60 to get more notifications
         )
         notified_count = await notifier.notify_batch(unique_jobs)
         print(f"Sent {notified_count} notifications")
@@ -158,7 +190,7 @@ async def run_job_scan():
                 result = session.execute(stmt)
                 job = result.scalar_one_or_none()
                 if job:
-                    job.notified_at = datetime.utcnow()
+                    job.notified_at = datetime.now(timezone.utc)
             session.commit()
 
     print(f"\nJob scan completed at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -265,6 +297,22 @@ async def async_main():
     print("Job Radar Starting...")
     print(f"Database: {settings.database_url}")
     print(f"Profile: {settings.profile_path}")
+
+    # Check if configured
+    if not is_configured(project_root):
+        print("\n" + "=" * 60)
+        print("ERROR: Job Radar is not configured!")
+        print("=" * 60)
+        missing = get_missing_config(project_root)
+        for item in missing:
+            print(f"  - {item}")
+        print("\nTo configure Job Radar:")
+        print("  1. Run the dashboard: streamlit run dashboard/app.py")
+        print("  2. Complete the Setup Wizard")
+        print("\nOr manually create config/profile.yaml and .env files.")
+        print("See config/profile.yaml.example and .env.example for templates.")
+        print("=" * 60)
+        return
 
     # Initialize database
     init_db()

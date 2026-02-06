@@ -7,6 +7,8 @@ _project_root = Path(__file__).parent.parent.parent
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
+import html
+
 import streamlit as st
 from sqlalchemy import select
 
@@ -53,7 +55,8 @@ with get_session() as session:
 
     metrics_cols = st.columns(len(PIPELINE_STAGES))
     for i, (status, label, color) in enumerate(PIPELINE_STAGES):
-        count = len(apps_by_status.get(status, []))
+        stage_apps = apps_by_status.get(status, [])
+        count = len(stage_apps)
         with metrics_cols[i]:
             st.markdown(
                 f"""
@@ -65,7 +68,7 @@ with get_session() as session:
                     text-align: center;
                 ">
                     <h2 style="margin: 0;">{count}</h2>
-                    <p style="margin: 0;">{label}</p>
+                    <p style="margin: 0; font-weight: bold;">{label}</p>
                 </div>
                 """,
                 unsafe_allow_html=True,
@@ -82,17 +85,7 @@ with get_session() as session:
     for col_idx, (status, label, color) in enumerate(PIPELINE_STAGES):
         with cols[col_idx]:
             st.markdown(
-                f"""
-                <div style="
-                    background: {color}20;
-                    border-top: 4px solid {color};
-                    padding: 0.5rem;
-                    border-radius: 8px;
-                    margin-bottom: 0.5rem;
-                ">
-                    <strong>{label}</strong>
-                </div>
-                """,
+                f'<div style="background:{color}20;border-top:4px solid {color};padding:0.5rem;border-radius:8px;margin-bottom:0.5rem"><strong>{label}</strong></div>',
                 unsafe_allow_html=True,
             )
 
@@ -102,24 +95,32 @@ with get_session() as session:
                 st.markdown("_No applications_")
             else:
                 for app in stage_apps[:10]:  # Limit displayed
+                    # Format applied date
+                    applied_str = ""
+                    if app.applied_date:
+                        applied_str = app.applied_date.strftime("%b %d")
+
+                    # Stage detail (e.g. "Phone Screen" vs just the status)
+                    stage_detail = html.escape(app.current_stage or "")
+
+                    company_safe = html.escape(app.company)
+                    position_safe = app.position[:40] + "..." if len(app.position) > 40 else app.position
+                    position_safe = html.escape(position_safe)
+
                     # Card for each application
-                    st.markdown(
-                        f"""
-                        <div style="
-                            background: white;
-                            border: 1px solid #e0e0e0;
-                            border-left: 4px solid {color};
-                            padding: 0.5rem;
-                            border-radius: 4px;
-                            margin-bottom: 0.5rem;
-                            font-size: 0.9rem;
-                        ">
-                            <strong>{app.company}</strong><br>
-                            <span style="color: #666;">{app.position[:25]}{'...' if len(app.position) > 25 else ''}</span>
-                        </div>
-                        """,
-                        unsafe_allow_html=True,
+                    stage_badge = ""
+                    if stage_detail:
+                        stage_badge = f'<span style="background:{color}22;color:{color};font-size:0.7rem;padding:1px 6px;border-radius:3px;font-weight:600">{stage_detail}</span>'
+
+                    card_html = (
+                        f'<div style="background:white;border:1px solid #e0e0e0;border-left:4px solid {color};padding:0.75rem;border-radius:6px;margin-bottom:0.5rem">'
+                        f'<div style="font-weight:700;font-size:1.05rem;margin-bottom:2px;color:#111">{company_safe}</div>'
+                        f'<div style="color:#444;font-size:0.85rem;margin-bottom:4px">{position_safe}</div>'
+                        f'<div style="display:flex;justify-content:space-between;align-items:center">'
+                        f'<span style="color:#999;font-size:0.75rem">{applied_str}</span>'
+                        f'{stage_badge}</div></div>'
                     )
+                    st.markdown(card_html, unsafe_allow_html=True)
 
                     # Quick actions
                     action_col1, action_col2 = st.columns(2)
@@ -169,9 +170,23 @@ with get_session() as session:
             )
 
             if stage_apps:
-                with st.expander(f"View {label}"):
+                with st.expander(f"View {label} ({len(stage_apps)})"):
                     for app in stage_apps[:20]:
-                        st.markdown(f"- **{app.company}** - {app.position}")
+                        # Format dates
+                        applied_str = app.applied_date.strftime("%b %d") if app.applied_date else ""
+                        position_short = app.position[:35] + "..." if len(app.position) > 35 else app.position
+                        st.markdown(
+                            f"""
+                            <div style="
+                                padding: 0.3rem 0;
+                                border-bottom: 1px solid #eee;
+                            ">
+                                <strong>{html.escape(app.company)}</strong> - {html.escape(position_short)}
+                                <span style="color: #999; font-size: 0.8rem; float: right;">{applied_str}</span>
+                            </div>
+                            """,
+                            unsafe_allow_html=True,
+                        )
 
                     if len(stage_apps) > 20:
                         st.markdown(f"_+{len(stage_apps) - 20} more_")
@@ -206,39 +221,21 @@ with get_session() as session:
         )
         st.metric("Rejection Rate", f"{rejection_rate:.1f}%")
 
-    # Conversion funnel
+    # Conversion funnel (uses FunnelAnalytics for highest-stage-reached consistency)
     st.markdown("---")
     st.markdown("### Conversion Funnel")
 
     if total > 0:
-        import plotly.graph_objects as go
+        from src.analytics.funnel import FunnelAnalytics
+        from dashboard.components.charts import create_funnel_chart
 
-        funnel_data = []
-        for status, label, _ in PIPELINE_STAGES:
-            # Count apps at this stage or beyond
-            idx = [s[0] for s in PIPELINE_STAGES].index(status)
-            count = sum(
-                len(apps_by_status.get(s[0], []))
-                for s in PIPELINE_STAGES[idx:]
-            )
-            count += len(apps_by_status.get("accepted", []))  # Include accepted
-            funnel_data.append((label, count))
+        funnel_analytics = FunnelAnalytics(session)
+        funnel_result = funnel_analytics.get_funnel()
 
-        fig = go.Figure(
-            go.Funnel(
-                y=[d[0] for d in funnel_data],
-                x=[d[1] for d in funnel_data],
-                textposition="inside",
-                textinfo="value+percent initial",
-                marker=dict(color=[s[2] for s in PIPELINE_STAGES]),
-            )
-        )
-
-        fig.update_layout(
-            height=400,
-            margin=dict(l=20, r=20, t=20, b=20),
-        )
-
-        st.plotly_chart(fig, width="stretch")
+        if funnel_result.total_applications > 0:
+            fig = create_funnel_chart(funnel_result)
+            st.plotly_chart(fig, width="stretch")
+        else:
+            st.info("Add applications to see your conversion funnel.")
     else:
         st.info("Add applications to see your conversion funnel.")

@@ -12,12 +12,18 @@ Usage:
 """
 import sys
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
+
+# Add project root to path
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
 
 from sqlalchemy import select, func
 
-from scripts.bootstrap import settings, get_session, init_db
+from config.settings import settings
+from src.persistence.database import get_session, init_db
 from src.persistence.models import Application, EmailImport
 from src.gmail.parser import EmailParser, EmailType
 from src.tracking.application_service import ApplicationService
@@ -147,12 +153,29 @@ def reprocess_emails(dry_run: bool = False):
                 date=email_import.received_at,
             )
 
-            # Re-parse
+            # Re-parse company
             old_company = email_import.parsed_data.get("company") if email_import.parsed_data else None
             new_company = parser._extract_company(fake_email)
 
-            # Only update if we got a different/better result
-            if new_company and new_company != old_company:
+            # Re-detect email type with new patterns
+            text = f"{fake_email.subject}\n{fake_email.body_text}".lower()
+            new_type, confidence = parser._detect_type(text)
+            old_type = email_import.email_type
+
+            # Update email type if it changed from unknown to something specific
+            if old_type == "unknown" and new_type != EmailType.UNKNOWN:
+                print(f"[TYPE] {email_import.subject[:50]}...")
+                print(f"  Old type: {old_type} -> New type: {new_type.value}")
+                if not dry_run:
+                    email_import.email_type = new_type.value
+                    email_import.parsed_data = {
+                        **(email_import.parsed_data or {}),
+                        "confidence": confidence,
+                    }
+                stats["reparsed"] += 1
+
+            # Only update company if we got a different/better result
+            if new_company and new_company != old_company and is_valid_company_name(new_company):
                 stats["reparsed"] += 1
                 print(f"[REPARSE] {email_import.subject[:50]}...")
                 print(f"  Old company: {old_company} -> New company: {new_company}")
@@ -176,20 +199,24 @@ def reprocess_emails(dry_run: bool = False):
                         email_import.processed = True
 
                     # Update application status based on email type
+                    app_service = ApplicationService(session)
                     if email_import.email_type == "rejection" and app.status not in ["rejected", "withdrawn"]:
                         print(f"  [STATUS] {app.company}: {app.status} -> rejected")
                         stats["status_updated"] += 1
                         if not dry_run:
-                            app.status = "rejected"
-                            app.last_status_change = datetime.utcnow()
-                            app.rejected_at = "resume"  # Email rejections are typically at resume stage
+                            app_service.update_status(
+                                app.id, "rejected",
+                                notes="Rejection email (reprocessed)",
+                            )
 
                     elif email_import.email_type == "interview_invite" and app.status in ["applied"]:
                         print(f"  [STATUS] {app.company}: {app.status} -> interviewing")
                         stats["status_updated"] += 1
                         if not dry_run:
-                            app.status = "interviewing"
-                            app.last_status_change = datetime.utcnow()
+                            app_service.update_status(
+                                app.id, "interviewing",
+                                notes="Interview invite email (reprocessed)",
+                            )
 
             # Check for confirmations without applications (create new app)
             if email_import.email_type == "confirmation" and company and not email_import.application_id:
@@ -204,7 +231,7 @@ def reprocess_emails(dry_run: bool = False):
                             new_app = Application(
                                 company=company,
                                 position="Unknown Position",
-                                applied_date=email_import.received_at or datetime.utcnow(),
+                                applied_date=email_import.received_at or datetime.now(timezone.utc),
                                 source="email_import",
                                 status="applied",
                             )

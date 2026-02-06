@@ -34,13 +34,30 @@ class ParsedEmail:
 class EmailParser:
     """Parse job-related emails to extract structured data."""
 
+    def __init__(self, user_email: Optional[str] = None):
+        """
+        Initialize email parser.
+
+        Args:
+            user_email: User's own email address. Emails from this address
+                        are classified as UNKNOWN (self-sent filtering).
+        """
+        self.user_email = user_email.lower() if user_email else None
+
     # Patterns for email type detection
     CONFIRMATION_PATTERNS = [
         r"thank you for (applying|your application|your interest)",
+        r"thanks for (applying|your application|your interest)",
+        r"thanks for applying to",
+        r"we appreciate (you|your) applying",
+        r"thanks from\s+\w+",  # "Thanks from {Company}"
         r"application (received|submitted|confirmed)",
         r"we (have )?(received|got) your application",
         r"successfully (submitted|applied)",
         r"your application (has been|was) (received|submitted)",
+        r"thank you for applying to",
+        r"your application to .+ at ",  # LinkedIn style: "Your application to X at Company"
+        r"your application was sent to",  # LinkedIn style: "Sam, your application was sent to {Company}"
     ]
 
     REJECTION_PATTERNS = [
@@ -74,7 +91,13 @@ class EmailParser:
         r"interview\s*(is\s*)?(scheduled|confirmed)\s*(for)?",
         r"looking forward to (speaking|meeting|chatting) with you on",
         r"confirmed for (monday|tuesday|wednesday|thursday|friday|saturday|sunday)",
-        r"we.?d like to (schedule|invite you to|move you forward)",
+        r"(we'd|we would|i'd|i would) like to (schedule|invite you to|move you forward)",
+        r"would like to schedule.{0,20}(interview|call|meeting|conversation)",
+        # Meeting requests
+        r"(we'd|we would|i'd|i would) (like|love) to meet",
+        r"(like|love) to meet with (our|the) team",
+        # Next steps (when explicitly about hiring)
+        r"next steps?.{0,10}(in |for )?(the |your )?(hiring|interview|recruitment)",
         # Subject line patterns (explicit interview mentions)
         r"interview request",
         r"interview invitation",
@@ -88,7 +111,7 @@ class EmailParser:
 
     # Weak interview signals (might indicate interest, but not definitive)
     INTERVIEW_WEAK_SIGNALS = [
-        r"(next|following) (step|round|stage)",
+        r"(next|following) (steps?|rounds?|stages?)",
         r"move(d|ing)? (forward|to the next)",
         r"would (like|love) to (speak|talk|chat|meet)",
         r"meet with (our|the) (team|hiring manager)",
@@ -120,16 +143,32 @@ class EmailParser:
 
     # Subject-based company extraction patterns (most reliable)
     SUBJECT_COMPANY_PATTERNS = [
+        # "Thanks for applying to {Company}" or "Thanks for applying to {Company}!"
+        r"thanks for applying to\s+([A-Za-z0-9][A-Za-z0-9\s&\.\-]+?)(?:\s*[!]?\s*$|\s*[-–])",
+        # "Thanks from {Company}"
+        r"thanks from\s+([A-Za-z0-9][A-Za-z0-9\s&\.\-]+?)(?:\s*$|\s*[-–])",
         # "Thank you from {Company}"
         r"thank you from\s+([A-Za-z0-9][A-Za-z0-9\s&\.\-]+?)(?:\s*$|\s*[-–])",
+        # "We Appreciate You Applying to {Company}"
+        r"we appreciate (?:you|your) applying to\s+([A-Za-z0-9][A-Za-z0-9\s&\.\-]+?)(?:\s*$|\s*[-–])",
+        # "Thank You for Applying to Join {Company}"
+        r"thank you for applying to join\s+([A-Za-z0-9][A-Za-z0-9\s&\.\-]+?)(?:\s*[!]?\s*$|\s*[-–])",
         # "Update from {Company}"
         r"update from\s+([A-Za-z0-9][A-Za-z0-9\s&\.\-]+?)(?:\s*$|\s*[-–])",
-        # "{Company} Update" or "{Company} Application"
-        r"^([A-Za-z0-9][A-Za-z0-9\s&\.\-]+?)\s+(?:update|application)(?:\s*$|\s*[-–])",
+        # "Employment Update - {Company Name, LLC}" (Workday/ATS-style)
+        r"employment update\s*[-–]\s*(.+?)(?:,\s*(?:LLC|Inc|Corp)\.?)?$",
+        # "An update on your {Company} application"
+        r"update on your\s+([A-Za-z0-9][A-Za-z0-9\s&\.\-]+?)\s+application",
+        # "{Company} Follow Up" / "{Company} Follow-Up"
+        r"^([A-Za-z0-9][A-Za-z0-9\s&\.\-]+?)\s+follow[- ]?up",
+        # "{Company} Update" or "{Company} Application" (exclude generic starts)
+        r"^(?!(?:update|employment|an|the|a|your)\s)([A-Za-z0-9][A-Za-z0-9\s&\.\-]+?)\s+(?:update|application)(?:\s*$|\s*[-–])",
         # "Thank you for applying to {Company}"
         r"thank you for (?:applying|your interest|your application) (?:to|in|at)\s+([A-Za-z0-9][A-Za-z0-9\s&\.\-]+?)(?:\s*$|\s*[-–])",
         # "Thank you for your interest in joining {Company}"
         r"thank you for your interest in joining\s+([A-Za-z0-9][A-Za-z0-9\s&\.\-]+?)(?:\s*$|\s*[-–])",
+        # "Thank you for your interest in {Company}"
+        r"thank you for your interest in\s+([A-Za-z0-9][A-Za-z0-9\s&\.\-]+?)(?:\s*$|\s*[-–]|\s*holding)",
         # "Update on your application with {Company}"
         r"(?:update on|regarding) your application (?:with|at|to)\s+([A-Za-z0-9][A-Za-z0-9\s&\.\-]+?)(?:\s*$|\s*[-–])",
         # "Your application for {role} at {Company}"
@@ -138,6 +177,20 @@ class EmailParser:
         r"your application to .+? at\s+([A-Za-z0-9][A-Za-z0-9\s&\.\-]+?)(?:\s*$|\s*[-–])",
         # "Update on position at {Company}"
         r"update on (?:the )?position at\s+([A-Za-z0-9][A-Za-z0-9\s&\.\-]+?)(?:\s*$|\s*[-–])",
+        # "Follow-up from {Company}" (rejections often use this)
+        r"follow-?up from\s+([A-Za-z0-9][A-Za-z0-9\s&\.\-]+?)(?:\s*$|\s*[-–|\|])",
+        # "{Role} - {Company}" pattern (common in confirmation subjects)
+        r"^(?:senior |lead |staff |principal )?(?:product manager|pm|engineer|developer)[^\|]+[-–]\s*([A-Za-z0-9][A-Za-z0-9\s&\.\-]+?)(?:\s*$)",
+        # "Sam, your application was sent to {Company}" (LinkedIn style)
+        r"your application was sent to\s+([A-Za-z0-9][A-Za-z0-9\s&\.\-]+?)(?:\s*$|\s*\.)",
+        # "We have received your application for {Company}!"
+        r"(?:we have )?received your application (?:for|to)\s+([A-Za-z0-9][A-Za-z0-9\s&\.\-]+?)(?:\s*[!]?\s*$)",
+        # "Application to {Company} successfully submitted"
+        r"application to\s+([A-Za-z0-9][A-Za-z0-9\s&\.\-]+?)\s+successfully",
+        # "Thanks for your interest in {Company}"
+        r"thanks for your interest in\s+([A-Za-z0-9][A-Za-z0-9\s&\.\-]+?)(?:\s*[,!]|\s*$)",
+        # "Following up on your {Company} ... Application"
+        r"following up on your\s+([A-Za-z0-9][A-Za-z0-9\s&\.\-]+?)\s+(?:senior |lead |staff )?(?:product|application)",
     ]
 
     # Body-based company extraction patterns (fallback)
@@ -152,16 +205,49 @@ class EmailParser:
         "greenhouse.io",
         "greenhouse-mail.io",
         "lever.co",
+        "hire.lever.co",
         "workday.com",
         "myworkday.com",
         "icims.com",
+        "talent.icims.com",
         "jobvite.com",
         "smartrecruiters.com",
         "ashbyhq.com",
         "rippling.com",
         "gem.com",
         "recruiting.experian.com",  # Subdomain ATS
+        "workablemail.com",
+        "candidates.workablemail.com",
+        "candidatecare.io",
+        "linkedin.com",
+        "jobs-noreply@linkedin.com",
+        "applytojob.com",
+        "myworkdayjobs.com",
+        "breezy.hr",
+        "recruitee.com",
+        "bamboohr.com",
+        "jazz.co",
+        "jazzhr.com",
+        "paylocity.com",
+        "paycom.com",
+        "ceridian.com",
+        "adp.com",
+        "ultipro.com",
+        "namely.com",
+        "personio.com",
+        "teamtailor.com",
+        "recruitics.com",
+        "fountain.com",
+        "dover.io",
+        "candidatecare.com",
     }
+
+    # Subjects that indicate this is NOT a job application email
+    EXCLUSION_PATTERNS = [
+        r"referral request",
+        r"referral for",
+        r"networking request",
+    ]
 
     def parse(self, email: EmailMessage) -> ParsedEmail:
         """
@@ -173,6 +259,10 @@ class EmailParser:
         Returns:
             ParsedEmail with extracted data
         """
+        # Self-sent email filtering
+        if self.user_email and email.from_address.lower() == self.user_email:
+            return ParsedEmail(email_type=EmailType.UNKNOWN, confidence=0.0)
+
         # Combine subject and body for analysis
         text = f"{email.subject}\n{email.body_text}".lower()
 
@@ -253,6 +343,11 @@ class EmailParser:
         if has_strong_signal or interview_score >= 3:
             scores[EmailType.INTERVIEW_INVITE] = max(0, interview_score)
 
+        # Check exclusion patterns — override to UNKNOWN
+        for pattern in self.EXCLUSION_PATTERNS:
+            if re.search(pattern, text, re.IGNORECASE):
+                return EmailType.UNKNOWN, 0.0
+
         # Find highest scoring type
         if max(scores.values()) == 0:
             return EmailType.UNKNOWN, 0.0
@@ -277,9 +372,12 @@ class EmailParser:
 
     def _extract_company(self, email: EmailMessage) -> Optional[str]:
         """Extract company name from email."""
+        # Normalize subject — strip trailing punctuation that breaks $ anchors
+        subject = re.sub(r"[!.]+\s*$", "", email.subject)
+
         # Step 1: Try subject-based patterns first (most reliable)
         for pattern in self.SUBJECT_COMPANY_PATTERNS:
-            match = re.search(pattern, email.subject, re.IGNORECASE)
+            match = re.search(pattern, subject, re.IGNORECASE)
             if match:
                 company = match.group(1).strip()
                 # Clean up and validate
@@ -298,6 +396,19 @@ class EmailParser:
             # Skip common email providers
             if company.lower() not in ["gmail", "yahoo", "outlook", "hotmail", "mail", "email", "noreply", "no-reply"]:
                 return company.title()
+        elif is_ats:
+            # For ATS domains, try extracting company from sender local part
+            # e.g. "Aristocrat@myworkday.com" -> "Aristocrat"
+            local_part = email.from_address.split("@")[0] if "@" in email.from_address else ""
+            generic_locals = {
+                "noreply", "no-reply", "donotreply", "do-not-reply",
+                "recruiting", "talent", "hr", "jobs", "careers",
+                "hiring", "notifications", "alerts", "info", "support",
+            }
+            if local_part and local_part.lower() not in generic_locals and len(local_part) >= 3:
+                # Check it looks like a company name (starts with letter, not an email-like pattern)
+                if local_part[0].isalpha() and "." not in local_part:
+                    return local_part.title()
 
         # Step 3: Try body-based patterns (fallback)
         for pattern in self.BODY_COMPANY_PATTERNS:
@@ -322,6 +433,9 @@ class EmailParser:
         if not name:
             return None
 
+        # Strip trailing punctuation (!, ., ,) that leaks from email subjects
+        name = re.sub(r"[!.,;:]+$", "", name)
+
         # Remove common suffixes/prefixes
         name = re.sub(r"^(?:the|team|at|from|with|joining)\s+", "", name, flags=re.IGNORECASE)
         name = re.sub(r"\s+(?:team|inc|llc|corp|ltd)\.?$", "", name, flags=re.IGNORECASE)
@@ -330,7 +444,11 @@ class EmailParser:
         name = " ".join(name.split())
 
         # Skip if it looks like a generic word or is too short
-        generic_words = {"hi", "hello", "dear", "sam", "thanks", "thank", "you", "your", "update", "application", "joining"}
+        generic_words = {
+            "hi", "hello", "dear", "sam", "thanks", "thank", "you", "your",
+            "update", "application", "joining", "employment", "an", "the",
+            "follow", "follow-up", "followup",
+        }
         if name.lower() in generic_words:
             return None
 

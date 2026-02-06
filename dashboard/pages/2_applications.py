@@ -152,7 +152,7 @@ with tab1:
 
                         if st.button("Save Interview", key=f"save_int_{app.id}"):
                             scheduled_at = datetime.combine(interview_date, interview_time)
-                            app_service.add_interview(
+                            result = app_service.add_interview(
                                 application_id=app.id,
                                 interview_type=interview_type,
                                 scheduled_at=scheduled_at,
@@ -160,7 +160,10 @@ with tab1:
                                 duration_minutes=int(duration),
                                 notes=interview_notes if interview_notes else None,
                             )
-                            st.success(f"Interview added! Status updated based on interview type.")
+                            if result:
+                                st.success("Interview added! Status updated based on interview type.")
+                            else:
+                                st.warning("Cannot add interview to a closed application.")
                             st.session_state[f"add_interview_{app.id}"] = False
                             st.rerun()
 
@@ -176,7 +179,7 @@ with tab2:
             applied_date = st.date_input("Applied Date", value=datetime.now())
             source = st.selectbox(
                 "Source",
-                ["linkedin", "company_site", "referral", "indeed", "glassdoor", "wellfound", "other"],
+                ["linkedin", "company_site", "referral", "indeed", "glassdoor", "other"],
             )
 
         with col2:

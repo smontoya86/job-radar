@@ -1,10 +1,12 @@
 """Tests for application and resume services."""
 import pytest
 from datetime import datetime
+from unittest.mock import MagicMock
 
 from src.tracking.application_service import ApplicationService
 from src.tracking.resume_service import ResumeService
-from src.persistence.models import Application, Resume, StatusHistory
+from src.gmail.parser import EmailType, ParsedEmail
+from src.persistence.models import Application, Job, Resume, StatusHistory
 
 
 class TestApplicationService:
@@ -151,6 +153,322 @@ class TestApplicationService:
         # Partial match
         found = service._find_application_by_company("Open")
         assert found is not None
+
+
+class TestTryLinkToJob:
+    """Tests for _try_link_to_job — linking Applications to Jobs by company."""
+
+    def test_try_link_to_job_by_company_name(self, test_db):
+        """Links Application to Job by matching company name."""
+        # Create a Job
+        job = Job(
+            id="job-link-1",
+            title="AI PM",
+            company="TestCorp",
+            url="https://testcorp.com/jobs/1",
+            source="greenhouse",
+            description="AI product management role requiring ML experience.",
+        )
+        test_db.add(job)
+        test_db.commit()
+
+        # Create an Application for the same company (no job_id yet)
+        app = Application(
+            id="app-link-1",
+            company="TestCorp",
+            position="AI PM",
+            applied_date=datetime(2026, 1, 20),
+            status="applied",
+        )
+        test_db.add(app)
+        test_db.commit()
+
+        service = ApplicationService(test_db)
+        service._try_link_to_job(app)
+
+        assert app.job_id == "job-link-1"
+
+    def test_try_link_to_job_case_insensitive(self, test_db):
+        """Case-insensitive company matching: 'testcorp' matches 'TestCorp'."""
+        job = Job(
+            id="job-case-1",
+            title="PM",
+            company="TestCorp",
+            url="https://testcorp.com/jobs/1",
+            source="greenhouse",
+            description="A great PM role.",
+        )
+        test_db.add(job)
+        test_db.commit()
+
+        app = Application(
+            id="app-case-1",
+            company="testcorp",
+            position="PM",
+            applied_date=datetime(2026, 1, 20),
+            status="applied",
+        )
+        test_db.add(app)
+        test_db.commit()
+
+        service = ApplicationService(test_db)
+        service._try_link_to_job(app)
+
+        assert app.job_id == "job-case-1"
+
+    def test_try_link_to_job_copies_description(self, test_db):
+        """Populates application.job_description from Job.description."""
+        job = Job(
+            id="job-desc-1",
+            title="PM",
+            company="DescCorp",
+            url="https://desccorp.com/jobs/1",
+            source="lever",
+            description="Full description of the PM role with ML requirements.",
+        )
+        test_db.add(job)
+        test_db.commit()
+
+        app = Application(
+            id="app-desc-1",
+            company="DescCorp",
+            position="PM",
+            applied_date=datetime(2026, 1, 20),
+            status="applied",
+        )
+        test_db.add(app)
+        test_db.commit()
+
+        service = ApplicationService(test_db)
+        service._try_link_to_job(app)
+
+        assert app.job_description == "Full description of the PM role with ML requirements."
+
+    def test_try_link_to_job_does_not_overwrite(self, test_db):
+        """Preserves existing job_description even when a Job is linked."""
+        job = Job(
+            id="job-no-overwrite-1",
+            title="PM",
+            company="KeepCorp",
+            url="https://keepcorp.com/jobs/1",
+            source="greenhouse",
+            description="Job description from radar.",
+        )
+        test_db.add(job)
+        test_db.commit()
+
+        app = Application(
+            id="app-no-overwrite-1",
+            company="KeepCorp",
+            position="PM",
+            applied_date=datetime(2026, 1, 20),
+            status="applied",
+            job_description="Manually entered description.",
+        )
+        test_db.add(app)
+        test_db.commit()
+
+        service = ApplicationService(test_db)
+        service._try_link_to_job(app)
+
+        # job_id should be linked, but description should NOT be overwritten
+        assert app.job_id == "job-no-overwrite-1"
+        assert app.job_description == "Manually entered description."
+
+    def test_create_from_email_links_to_job(self, test_db):
+        """New applications created from email get linked to existing jobs."""
+        job = Job(
+            id="job-email-1",
+            title="Data PM",
+            company="EmailCorp",
+            url="https://emailcorp.com/jobs/1",
+            source="greenhouse",
+            description="Data PM role with analytics focus.",
+        )
+        test_db.add(job)
+        test_db.commit()
+
+        parsed_email = ParsedEmail(
+            email_type=EmailType.CONFIRMATION,
+            company="EmailCorp",
+            position="Data PM",
+            confidence=0.9,
+        )
+
+        service = ApplicationService(test_db)
+        app = service.create_from_email(parsed_email)
+
+        assert app is not None
+        assert app.job_id == "job-email-1"
+        assert app.job_description == "Data PM role with analytics focus."
+
+    def test_update_status_rejected_populates_description(self, test_db):
+        """When status changes to 'rejected', description is copied from linked Job."""
+        job = Job(
+            id="job-rej-1",
+            title="PM",
+            company="RejCorp",
+            url="https://rejcorp.com/jobs/1",
+            source="lever",
+            description="PM role description for analysis.",
+        )
+        test_db.add(job)
+        test_db.commit()
+
+        app = Application(
+            id="app-rej-1",
+            company="RejCorp",
+            position="PM",
+            applied_date=datetime(2026, 1, 20),
+            status="applied",
+            job_id="job-rej-1",
+            # job_description intentionally NULL
+        )
+        test_db.add(app)
+        test_db.commit()
+
+        service = ApplicationService(test_db)
+        updated = service.update_status(app.id, "rejected")
+
+        assert updated.status == "rejected"
+        assert updated.job_description == "PM role description for analysis."
+
+    def test_try_link_to_job_picks_most_recent(self, test_db):
+        """When multiple jobs match the company, picks the most recently discovered one."""
+        job_old = Job(
+            id="job-old-1",
+            title="PM",
+            company="MultiCorp",
+            url="https://multicorp.com/jobs/old",
+            source="lever",
+            description="Old job description.",
+            discovered_at=datetime(2026, 1, 1),
+        )
+        job_new = Job(
+            id="job-new-1",
+            title="Senior PM",
+            company="MultiCorp",
+            url="https://multicorp.com/jobs/new",
+            source="greenhouse",
+            description="New job description.",
+            discovered_at=datetime(2026, 1, 25),
+        )
+        test_db.add_all([job_old, job_new])
+        test_db.commit()
+
+        app = Application(
+            id="app-multi-1",
+            company="MultiCorp",
+            position="PM",
+            applied_date=datetime(2026, 1, 20),
+            status="applied",
+        )
+        test_db.add(app)
+        test_db.commit()
+
+        service = ApplicationService(test_db)
+        service._try_link_to_job(app)
+
+        assert app.job_id == "job-new-1"
+        assert app.job_description == "New job description."
+
+
+class TestCreateFromRejectionEmail:
+    """Tests for creating applications from rejection emails (no prior confirmation)."""
+
+    def test_create_from_rejection_email_creates_application(self, test_db):
+        """Rejection email with no existing app should create one."""
+        parsed_email = ParsedEmail(
+            email_type=EmailType.REJECTION,
+            company="Fontainebleau",
+            position="Product Manager",
+            confidence=0.8,
+        )
+
+        service = ApplicationService(test_db)
+        app = service.create_from_email(parsed_email)
+
+        assert app is not None
+        assert app.company == "Fontainebleau"
+        assert app.status == "rejected"
+
+    def test_create_from_rejection_email_links_to_job(self, test_db):
+        """New app from rejection email should link to matching Job."""
+        job = Job(
+            id="job-rej-link-1",
+            title="PM",
+            company="Federato",
+            url="https://federato.com/jobs/1",
+            source="greenhouse",
+            description="PM role at Federato requiring AI experience.",
+        )
+        test_db.add(job)
+        test_db.commit()
+
+        parsed_email = ParsedEmail(
+            email_type=EmailType.REJECTION,
+            company="Federato",
+            position="Unknown Position",
+            confidence=0.8,
+        )
+
+        service = ApplicationService(test_db)
+        app = service.create_from_email(parsed_email)
+
+        assert app is not None
+        assert app.job_id == "job-rej-link-1"
+        assert app.job_description == "PM role at Federato requiring AI experience."
+
+    def test_create_from_rejection_email_sets_rejected_at(self, test_db):
+        """New app from rejection email should have rejected_at = 'applied'."""
+        parsed_email = ParsedEmail(
+            email_type=EmailType.REJECTION,
+            company="Aristocrat",
+            confidence=0.7,
+        )
+
+        service = ApplicationService(test_db)
+        app = service.create_from_email(parsed_email)
+
+        assert app is not None
+        assert app.rejected_at == "applied"
+
+    def test_rejection_email_with_existing_app_updates_status(self, test_db):
+        """Rejection email for existing app should update to rejected (not create new)."""
+        existing = Application(
+            company="WWT",
+            position="PM",
+            applied_date=datetime(2026, 1, 15),
+            status="applied",
+        )
+        test_db.add(existing)
+        test_db.commit()
+
+        parsed_email = ParsedEmail(
+            email_type=EmailType.REJECTION,
+            company="WWT",
+            confidence=0.8,
+        )
+
+        service = ApplicationService(test_db)
+        app = service.create_from_email(parsed_email)
+
+        assert app is not None
+        assert app.id == existing.id
+        assert app.status == "rejected"
+
+    def test_rejection_email_no_company_returns_none(self, test_db):
+        """Rejection email with no company should return None."""
+        parsed_email = ParsedEmail(
+            email_type=EmailType.REJECTION,
+            company=None,
+            confidence=0.5,
+        )
+
+        service = ApplicationService(test_db)
+        app = service.create_from_email(parsed_email)
+
+        assert app is None
 
 
 class TestResumeService:

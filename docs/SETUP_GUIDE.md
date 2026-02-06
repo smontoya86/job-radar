@@ -2,6 +2,8 @@
 
 This guide walks you through setting up Slack notifications and Gmail integration.
 
+> **Tip:** The easiest way to configure Job Radar is through the **Setup Wizard** in the dashboard. Run `streamlit run dashboard/app.py` and you'll be guided through all configuration steps. This guide covers the manual setup process.
+
 ---
 
 ## Part 1: Slack Webhook Setup
@@ -144,7 +146,7 @@ This will:
 
 ### Step 6: Import Historical Emails
 
-To import all job-related emails since your layoff date (Jan 20, 2025):
+To import all job-related emails since your configured start date (set in profile.yaml):
 
 ```bash
 python scripts/import_historical.py
@@ -208,8 +210,54 @@ python src/main.py
 | Slack webhook | `.env` → `SLACK_WEBHOOK_URL` |
 | Gmail credentials | `credentials.json` (project root) |
 | Gmail token | `token.json` (auto-created) |
-| Database | `job_radar.db` (project root) |
+| Database | `data/job_radar.db` |
 | Logs | `logs/jobradar.log` |
+
+---
+
+## Part 3: Docker Setup
+
+Docker is the recommended way to run both the dashboard and scanner:
+
+### Quick Start
+
+```bash
+# Copy config templates
+cp .env.example .env
+cp config/profile.yaml.example config/profile.yaml
+
+# Edit configs with your settings, then start
+./docker-start.sh
+```
+
+### Services
+
+| Service | Port | Purpose |
+|---------|------|---------|
+| `dashboard` | 8501 | Streamlit web UI |
+| `scanner` | - | Background job radar |
+
+### Data Persistence
+
+Data is stored on the host via Docker volumes:
+- `./data/job_radar.db` - SQLite database
+- `./config/profile.yaml` - Job search criteria (read-only mount)
+- `./.env` - Environment secrets (read-only mount)
+
+### Docker Commands
+
+```bash
+./docker-start.sh            # Build & start
+./docker-stop.sh             # Stop
+docker compose logs -f       # View all logs
+docker compose restart scanner  # Restart scanner only
+```
+
+### Gmail in Docker
+
+Gmail OAuth requires an interactive browser flow for initial setup. Run `python scripts/setup_gmail.py` locally first to create `token.json`, then Docker can use it via volume mount.
+
+---
 
 ### Troubleshooting
 
@@ -224,3 +272,6 @@ python src/main.py
 
 **"Module not found"**
 → Make sure you activated the venv: `source venv/bin/activate`
+
+**"Port 8501 already in use"**
+→ Stop any local Streamlit instance before starting Docker: `docker compose down` or change `DASHBOARD_PORT` in `.env`

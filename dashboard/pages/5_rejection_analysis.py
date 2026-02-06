@@ -26,10 +26,18 @@ st.markdown("Analyze rejected applications to identify resume gaps and improveme
 # Tabs
 tab1, tab2 = st.tabs(["Analysis", "Add Job Descriptions"])
 
-with tab1:
+@st.cache_data(ttl=300)
+def _cached_analysis():
+    """Cache rejection analysis for 5 minutes to avoid repeated expensive queries."""
     with get_session() as session:
         analyzer = RejectionAnalyzer(session)
-        insights = analyzer.analyze()
+        return analyzer.analyze()
+
+
+with tab1:
+    insights = _cached_analysis()
+    with get_session() as session:
+        analyzer = RejectionAnalyzer(session)
 
         # Summary metrics
         col1, col2, col3 = st.columns(3)

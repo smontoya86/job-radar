@@ -15,7 +15,7 @@ class SlackNotifier:
         self,
         webhook_url: Optional[str] = None,
         min_score: float = 60,
-        remote_only: bool = True,
+        remote_only: bool = False,  # Changed default to False to notify for all jobs
     ):
         """
         Initialize Slack notifier.

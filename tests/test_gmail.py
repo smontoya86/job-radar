@@ -205,6 +205,93 @@ class TestEmailTypePatterns:
             email_type, confidence = parser._detect_type(text.lower())
             assert email_type == EmailType.REJECTION, f"Failed for: {text}"
 
+    def test_referral_not_classified_as_rejection(self, parser):
+        """Referral request replies should not be classified as rejection."""
+        email = EmailMessage(
+            id="test-referral",
+            thread_id="test",
+            subject="Re: [External] : Sam Montoya Referral Request",
+            from_address="delia.cercel-mihaita@oracle.com",
+            from_name="Delia Cercel",
+            to_address="test@gmail.com",
+            date=datetime.now(),
+            body_text="Unfortunately, we don't have any open positions that match your profile at this time.",
+            snippet="Unfortunately",
+        )
+
+        result = parser.parse(email)
+        assert result.email_type != EmailType.REJECTION
+
+    def test_company_extraction_update_on_your_application(self, parser):
+        """'An update on your Fontainebleau application' extracts 'Fontainebleau'."""
+        email = EmailMessage(
+            id="test-fontainebleau",
+            thread_id="test",
+            subject="An update on your Fontainebleau application",
+            from_address="morris@fblasvegas.com",
+            from_name="Morris",
+            to_address="test@gmail.com",
+            date=datetime.now(),
+            body_text="After careful review, we decided to move forward with other candidates.",
+            snippet="After careful review",
+        )
+
+        result = parser.parse(email)
+        assert result.company is not None
+        assert "fontainebleau" in result.company.lower()
+
+    def test_company_extraction_follow_up(self, parser):
+        """'Aristocrat Follow Up' extracts 'Aristocrat'."""
+        email = EmailMessage(
+            id="test-aristocrat",
+            thread_id="test",
+            subject="Aristocrat Follow Up",
+            from_address="Aristocrat@myworkday.com",
+            from_name="Aristocrat",
+            to_address="test@gmail.com",
+            date=datetime.now(),
+            body_text="We regret to inform you that we will not be moving forward.",
+            snippet="We regret to inform",
+        )
+
+        result = parser.parse(email)
+        assert result.company is not None
+        assert "aristocrat" in result.company.lower()
+
+    def test_company_extraction_ats_sender_prefix(self, parser):
+        """ATS sender like 'Aristocrat@myworkday.com' extracts 'Aristocrat'."""
+        company = parser._extract_company(EmailMessage(
+            id="test",
+            thread_id="test",
+            subject="Update on your application",
+            from_address="Aristocrat@myworkday.com",
+            from_name="",
+            to_address="test@gmail.com",
+            date=datetime.now(),
+            body_text="Unfortunately we are not proceeding.",
+            snippet="",
+        ))
+        assert company is not None
+        assert "aristocrat" in company.lower()
+
+    def test_company_extraction_employment_update(self, parser):
+        """'Employment Update - World Wide Technology Holding, LLC' extracts company."""
+        email = EmailMessage(
+            id="test-wwt",
+            thread_id="test",
+            subject="Employment Update - World Wide Technology Holding, LLC",
+            from_address="do-not-reply@candidatecare.com",
+            from_name="",
+            to_address="test@gmail.com",
+            date=datetime.now(),
+            body_text="We regret to inform you that the position has been filled.",
+            snippet="",
+        )
+
+        result = parser.parse(email)
+        assert result.company is not None
+        assert "world wide technology" in result.company.lower()
+
     def test_interview_patterns(self, parser):
         """Test all interview patterns."""
         interview_texts = [

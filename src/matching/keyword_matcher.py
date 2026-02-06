@@ -71,10 +71,14 @@ class KeywordMatcher:
         # Target titles
         primary_titles = self.profile.get("target_titles", {}).get("primary", [])
         secondary_titles = self.profile.get("target_titles", {}).get("secondary", [])
+        self.all_target_titles = primary_titles + secondary_titles
         self.title_patterns = [
             re.compile(rf"\b{re.escape(t)}\b", re.IGNORECASE)
-            for t in primary_titles + secondary_titles
+            for t in self.all_target_titles
         ]
+
+        # Precompute core role terms for title relevance scoring
+        self.core_role_terms = self._extract_core_role_terms()
 
         # Target companies by tier
         self.company_tiers = {
@@ -108,16 +112,15 @@ class KeywordMatcher:
         description = job.description or ""
         title = job.title or ""
 
-        # Combine all searchable text for negative keyword check
-        searchable = " ".join(filter(None, [title, job.company, description, job.location or ""]))
-
-        # Check negative keywords first
+        # Check negative keywords against job title
+        # Title-based check prevents rejecting good PM jobs whose descriptions
+        # happen to mention negative terms (e.g., "reports to engineering manager")
         negative_matches = []
         for pattern, keyword in zip(self.negative_patterns, self.negative_keywords):
-            if pattern.search(searchable):
+            if pattern.search(title):
                 negative_matches.append(keyword)
 
-        # If negative keywords found, reject (unless target company)
+        # If negative keywords found in title, reject (unless target company)
         if negative_matches:
             company_tier = self.company_tiers.get(job.company.lower())
             if not company_tier:
@@ -213,37 +216,74 @@ class KeywordMatcher:
             title_partial_match=title_partial_score,
         )
 
-    def _calculate_title_relevance(self, title: str) -> float:
-        """
-        Calculate partial title relevance score (0-1).
+    # Seniority prefixes stripped when extracting core role terms.
+    # These are universal across industries and not role-specific.
+    _SENIORITY_PREFIXES = [
+        "senior ", "sr. ", "sr ", "lead ", "staff ", "principal ",
+        "director of ", "director, ", "group ", "head of ", "vp of ",
+        "vp, ", "chief ", "associate ", "junior ",
+    ]
 
-        Gives partial credit for related titles even if not exact match.
-        E.g., "Product Manager" gets some credit, "Staff Product Manager" gets more.
+    def _extract_core_role_terms(self) -> set[str]:
+        """Extract core role terms from configured target titles.
+
+        Strips seniority prefixes and comma suffixes to get the essential
+        role name.  E.g.:
+          "Senior AI Product Manager"  → "ai product manager"
+          "Product Manager, AI"        → "product manager"
+          "Lead Data Scientist"        → "data scientist"
+          "Staff Backend Engineer"     → "backend engineer"
+        """
+        core_terms = set()
+        for t in self.all_target_titles:
+            t_lower = t.lower().strip()
+            # Strip one seniority prefix from the beginning
+            for prefix in self._SENIORITY_PREFIXES:
+                if t_lower.startswith(prefix):
+                    t_lower = t_lower[len(prefix):]
+                    break
+            # Handle comma suffixes: "Product Manager, AI" → "product manager"
+            core = t_lower.split(",")[0].strip()
+            if core:
+                core_terms.add(core)
+        return core_terms
+
+    def _calculate_title_relevance(self, title: str) -> float:
+        """Calculate partial title relevance score (0-1).
+
+        Fully dynamic — derives relevance from the user's configured target
+        titles rather than any hardcoded role or domain terms.
+
+        Scoring approach:
+          1. Exact regex match to a target title → 1.0
+          2. Contains a core role term (e.g. "product manager") → 0.3 base
+             + up to 0.7 from word overlap with the best-matching target title
+          3. No core role match → 0.1 (very low)
         """
         title_lower = title.lower()
-        score = 0.0
-
-        # Check for PM-related terms (base relevance)
-        pm_terms = ["product manager", "product lead", "product director", "pm"]
-        if any(term in title_lower for term in pm_terms):
-            score += 0.3
-
-        # Check for seniority indicators
-        seniority_terms = ["senior", "sr.", "lead", "staff", "principal", "director", "head", "vp", "group"]
-        if any(term in title_lower for term in seniority_terms):
-            score += 0.2
-
-        # Check for AI/ML/relevant domain in title
-        domain_terms = ["ai", "ml", "machine learning", "search", "discovery", "personalization",
-                       "recommendation", "platform", "data", "growth", "core"]
-        if any(term in title_lower for term in domain_terms):
-            score += 0.3
 
         # Exact match from target titles gets full score
         if any(p.search(title) for p in self.title_patterns):
-            score = 1.0
+            return 1.0
 
-        return min(1.0, score)
+        # Title must contain at least one core role term
+        has_core_role = any(term in title_lower for term in self.core_role_terms)
+        if not has_core_role:
+            return 0.1
+
+        # Calculate best word overlap with any configured title
+        title_words = set(title_lower.split())
+        best_overlap = 0.0
+        for configured_title in self.all_target_titles:
+            configured_words = set(configured_title.lower().split())
+            if not configured_words:
+                continue
+            common = title_words & configured_words
+            overlap = len(common) / len(configured_words)
+            best_overlap = max(best_overlap, overlap)
+
+        # 0.3 base (has core role) + up to 0.7 scaled by word overlap
+        return min(1.0, 0.3 + best_overlap * 0.7)
 
     def _calculate_score_v2(
         self,
@@ -324,16 +364,23 @@ class KeywordMatcher:
         return min(100, max(0, score))
 
     def get_search_queries(self) -> list[str]:
-        """Get search queries from profile for collectors."""
+        """Get search queries from profile for collectors.
+
+        Uses only the configured target titles (primary + secondary) as
+        search queries. This produces more relevant results than appending
+        keywords to role names, which job boards interpret as broad keyword
+        searches and return unrelated roles.
+        """
+        seen = set()
         queries = []
 
-        # Add primary titles
         primary_titles = self.profile.get("target_titles", {}).get("primary", [])
-        queries.extend(primary_titles)
+        secondary_titles = self.profile.get("target_titles", {}).get("secondary", [])
 
-        # Add primary keywords with "Product Manager"
-        primary_keywords = self.profile.get("required_keywords", {}).get("primary", [])
-        for kw in primary_keywords[:5]:  # Limit to top 5
-            queries.append(f"{kw} Product Manager")
+        for title in primary_titles + secondary_titles:
+            key = title.strip().lower()
+            if key and key not in seen:
+                seen.add(key)
+                queries.append(title.strip())
 
         return queries

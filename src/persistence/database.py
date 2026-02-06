@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Generator
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import Session, sessionmaker
 
 # Add parent to path for imports
@@ -24,9 +24,26 @@ engine = create_engine(
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
+def _migrate_add_user_id_columns() -> None:
+    """Add user_id columns to tables that were created before multi-tenant support."""
+    tables_needing_user_id = ["jobs", "applications", "email_imports", "resumes", "status_history"]
+    inspector = inspect(engine)
+
+    with engine.begin() as conn:
+        for table in tables_needing_user_id:
+            if table not in inspector.get_table_names():
+                continue
+            columns = [col["name"] for col in inspector.get_columns(table)]
+            if "user_id" not in columns:
+                conn.execute(text(
+                    f'ALTER TABLE {table} ADD COLUMN user_id VARCHAR REFERENCES users(id)'
+                ))
+
+
 def init_db() -> None:
     """Initialize the database, creating all tables."""
     Base.metadata.create_all(bind=engine)
+    _migrate_add_user_id_columns()
 
 
 def drop_db() -> None:

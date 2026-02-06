@@ -1,5 +1,5 @@
 """Job deduplication."""
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from sqlalchemy import select
@@ -26,7 +26,7 @@ class Deduplicator:
 
     def load_existing_fingerprints(self) -> None:
         """Load fingerprints from existing jobs in database."""
-        cutoff = datetime.utcnow() - timedelta(days=self.lookback_days)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=self.lookback_days)
 
         stmt = select(Job.fingerprint).where(
             Job.discovered_at >= cutoff,

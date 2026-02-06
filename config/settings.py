@@ -10,14 +10,14 @@ class Settings(BaseSettings):
     """Application configuration loaded from environment variables."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(Path(__file__).parent.parent / ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
     )
 
     # Database
     database_url: str = Field(
-        default="sqlite:///job_radar.db",
+        default="sqlite:///data/job_radar.db",
         description="SQLAlchemy database URL",
     )
 
@@ -47,10 +47,28 @@ class Settings(BaseSettings):
         description="Adzuna API key",
     )
 
+    # SerpApi (optional — replaces JobSpy for Google Jobs)
+    serpapi_key: Optional[str] = Field(
+        default=None,
+        description="SerpApi API key for Google Jobs",
+    )
+
+    # JSearch / RapidAPI (optional — complementary aggregator)
+    jsearch_api_key: Optional[str] = Field(
+        default=None,
+        description="JSearch API key (RapidAPI)",
+    )
+
     # Dashboard
     dashboard_port: int = Field(
         default=8501,
         description="Streamlit dashboard port",
+    )
+
+    # Scoring
+    scoring_engine: str = Field(
+        default="heuristic",
+        description="Scoring engine to use: 'heuristic', 'ai', or 'hybrid'",
     )
 
     # Scheduler intervals

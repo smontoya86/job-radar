@@ -1,5 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Job Radar launchd plist template.
+  Replace all occurrences of YOUR_PROJECT_PATH with the absolute path to your
+  job-radar directory (e.g. /Users/yourname/job-radar).
+  Or simply run scripts/install_launchd.sh to generate this automatically.
+-->
 <plist version="1.0">
 <dict>
     <key>Label</key>
@@ -7,14 +13,13 @@
 
     <key>ProgramArguments</key>
     <array>
-        <!-- Replace $HOME with your actual home directory path -->
-        <string>$HOME/job-radar/venv/bin/python</string>
+        <string>YOUR_PROJECT_PATH/venv/bin/python</string>
         <string>-u</string>
-        <string>$HOME/job-radar/src/main.py</string>
+        <string>YOUR_PROJECT_PATH/src/main.py</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>$HOME/job-radar</string>
+    <string>YOUR_PROJECT_PATH</string>
 
     <key>RunAtLoad</key>
     <true/>
@@ -23,17 +28,17 @@
     <true/>
 
     <key>StandardOutPath</key>
-    <string>$HOME/job-radar/logs/jobradar.log</string>
+    <string>YOUR_PROJECT_PATH/logs/jobradar.log</string>
 
     <key>StandardErrorPath</key>
-    <string>$HOME/job-radar/logs/jobradar.error.log</string>
+    <string>YOUR_PROJECT_PATH/logs/jobradar.error.log</string>
 
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
-        <string>$HOME/job-radar/venv/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <string>YOUR_PROJECT_PATH/venv/bin:/usr/local/bin:/usr/bin:/bin</string>
         <key>PYTHONPATH</key>
-        <string>$HOME/job-radar</string>
+        <string>YOUR_PROJECT_PATH</string>
     </dict>
 </dict>
 </plist>

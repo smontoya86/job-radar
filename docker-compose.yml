@@ -17,15 +17,15 @@ services:
     volumes:
       # Persist database
       - ./data:/app/data
-      # Mount config (create from profile.yaml.example if needed)
-      - ./config/profile.yaml:/app/config/profile.yaml:ro
+      # Mount config (writable so Settings page can update profile)
+      - ./config:/app/config
+      # Mount .env so config_checker can find it
+      - ./.env:/app/.env:ro
       # Mount credentials for Gmail (optional - use empty files if not set up)
       - ./credentials.json:/app/credentials.json:ro
       - ./token.json:/app/token.json:ro
     env_file:
       - .env
-    environment:
-      - DATABASE_URL=sqlite:////app/data/job_radar.db
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8501/_stcore/health\")'"]
@@ -42,8 +42,12 @@ services:
     volumes:
       # Share same database
       - ./data:/app/data
+      # Mount source code for live updates
+      - ./src:/app/src:ro
       # Mount config
       - ./config/profile.yaml:/app/config/profile.yaml:ro
+      # Mount .env so config_checker can find it
+      - ./.env:/app/.env:ro
       # Mount credentials for Gmail (optional)
       - ./credentials.json:/app/credentials.json:ro
       - ./token.json:/app/token.json:ro
@@ -51,8 +55,6 @@ services:
       - ./logs:/app/logs
     env_file:
       - .env
-    environment:
-      - DATABASE_URL=sqlite:////app/data/job_radar.db
     restart: unless-stopped
     depends_on:
       dashboard:

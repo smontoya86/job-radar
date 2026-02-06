@@ -69,7 +69,11 @@ Thumbs.db
 
 # Personal configuration (use *.example files as templates)
 config/profile.yaml
-launchd/com.sammontoya.jobradar.plist
+launchd/*.plist
+!launchd/*.plist.example
+
+# Backups
+backups/
 
 # Docker data directory
 data/

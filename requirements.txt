@@ -31,7 +31,7 @@ jsonschema-specifications==2025.9.1
 MarkupSafe==3.0.3
 multidict==6.7.1
 narwhals==2.15.0
-numpy==2.4.1
+numpy==1.26.3
 oauthlib==3.3.1
 packaging==26.0
 pandas==2.3.3
@@ -76,4 +76,3 @@ uritemplate==4.2.0
 urllib3==2.6.3
 yarl==1.22.0
 psycopg2-binary>=2.9
-python-jobspy>=1.1

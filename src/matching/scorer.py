@@ -1,9 +1,12 @@
 """Job scoring and ranking."""
+import logging
 from dataclasses import dataclass
 from typing import Optional
 
 from src.collectors.base import JobData
 from src.matching.keyword_matcher import KeywordMatcher, MatchResult
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -107,3 +110,29 @@ class JobScorer:
     ) -> list[ScoredJob]:
         """Get top N jobs by score."""
         return scored_jobs[:n]
+
+
+def get_scorer(
+    profile_path: str,
+    scoring_engine: str = "heuristic",
+    min_score: float = 0,
+) -> JobScorer:
+    """Factory: create a JobScorer based on the configured scoring engine.
+
+    Args:
+        profile_path: Path to profile.yaml
+        scoring_engine: One of 'heuristic', 'ai', 'hybrid'
+        min_score: Minimum score threshold
+
+    Returns:
+        A JobScorer instance (always heuristic for now;
+        'ai' and 'hybrid' fall back with a warning).
+    """
+    if scoring_engine in ("ai", "hybrid"):
+        logger.warning(
+            "Scoring engine '%s' is not yet available. Falling back to heuristic.",
+            scoring_engine,
+        )
+
+    matcher = KeywordMatcher(profile_path)
+    return JobScorer(matcher, min_score=min_score)

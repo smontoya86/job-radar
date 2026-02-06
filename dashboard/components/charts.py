@@ -27,10 +27,8 @@ def create_funnel_chart(funnel_data: FunnelData) -> go.Figure:
             marker=dict(
                 color=[
                     "#3498db",  # Applied
-                    "#9b59b6",  # Screening
-                    "#8e44ad",  # Phone Screen
-                    "#e67e22",  # Interview
-                    "#f39c12",  # Onsite
+                    "#9b59b6",  # Phone Screen
+                    "#e67e22",  # Interviewing
                     "#27ae60",  # Offer
                     "#2ecc71",  # Accepted
                 ]
@@ -255,10 +253,8 @@ def create_pipeline_bar_chart(status_counts: dict[str, int]) -> go.Figure:
     # Define status order and colors
     status_order = [
         "applied",
-        "screening",
         "phone_screen",
-        "interview",
-        "onsite",
+        "interviewing",
         "offer",
         "accepted",
         "rejected",
@@ -268,10 +264,8 @@ def create_pipeline_bar_chart(status_counts: dict[str, int]) -> go.Figure:
 
     status_colors = {
         "applied": "#3498db",
-        "screening": "#9b59b6",
-        "phone_screen": "#8e44ad",
-        "interview": "#e67e22",
-        "onsite": "#f39c12",
+        "phone_screen": "#9b59b6",
+        "interviewing": "#e67e22",
         "offer": "#27ae60",
         "accepted": "#2ecc71",
         "rejected": "#e74c3c",

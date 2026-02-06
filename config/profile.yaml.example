@@ -1,3 +1,9 @@
+##########################################################################
+# SAMPLE PROFILE — This is an example for an AI Product Manager role.
+# Customize ALL values below to match YOUR job search, or use the
+# Setup Wizard instead (run: streamlit run dashboard/app.py).
+##########################################################################
+
 # Job Search Profile Configuration
 # Customize this file to match your job search criteria
 
@@ -130,36 +136,24 @@ target_companies:
 
 sources:
   enabled:
-    - "indeed"
-    - "linkedin"
-    - "glassdoor"
-    - "google"
     - "remoteok"
-    - "wellfound"
     - "greenhouse"
     - "lever"
+    - "ashby"
     - "hn_whoishiring"
+    - "workday"
+    - "smartrecruiters"
   disabled:
-    - "adzuna"  # Enable if you have API key
+    - "adzuna"       # Enable if you have ADZUNA_APP_ID + ADZUNA_APP_KEY
+    - "serpapi"       # Enable if you have SERPAPI_KEY (covers Google Jobs, Indeed, LinkedIn)
+    - "jsearch"       # Enable if you have JSEARCH_API_KEY (RapidAPI)
+    - "search_discovery"  # Enable if you have SERPAPI_KEY (discovers new ATS boards)
 
 scoring:
-  # Description-Centric Scoring Algorithm (v2)
-  # The algorithm prioritizes job DESCRIPTION analysis over title matching.
-  # A "Staff PM" with AI/ML heavy description scores higher than "AI PM" with generic description.
-  #
-  # New weights (hardcoded in keyword_matcher.py):
-  #   - Description keyword relevance: 40% (primary signal)
-  #   - Title relevance: 20% (partial credit for related titles)
-  #   - Keyword variety & density: 15% (more different keywords = better)
-  #   - Company tier: 15%
-  #   - Salary/Remote: 10%
-  #
-  # Legacy weights (kept for reference, not used):
-  title_match: 0.20  # Reduced from 0.35
-  keyword_match: 0.40  # Increased, now focuses on description
-  company_tier: 0.15
-  salary_match: 0.05
-  remote_match: 0.05
+  # Scoring weights are hardcoded in src/matching/keyword_matcher.py:
+  #   Description keywords 40%, Title 20%, Keyword variety 15%,
+  #   Company tier 15%, Salary/Remote 10%.
+  # Only the thresholds below are read from this file.
 
   # Minimum score to notify (0-100)
   min_notification_score: 50

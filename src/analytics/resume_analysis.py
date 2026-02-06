@@ -1,6 +1,6 @@
 """Resume performance analytics."""
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import func, select
@@ -208,7 +208,7 @@ class ResumeAnalytics:
         """
         from datetime import timedelta
 
-        end_date = datetime.utcnow()
+        end_date = datetime.now(timezone.utc)
         start_date = end_date - timedelta(weeks=weeks)
 
         # Get applications by day

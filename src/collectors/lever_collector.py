@@ -1,5 +1,6 @@
 """Lever job board collector."""
 import asyncio
+import random
 from datetime import datetime
 from typing import Optional
 
@@ -111,6 +112,8 @@ class LeverCollector(BaseCollector):
         self,
         companies: Optional[list[str]] = None,
         timeout: int = 30,
+        max_concurrent: int = 5,
+        delay_between_requests: tuple[float, float] = (0.5, 1.5),
     ):
         """
         Initialize Lever collector.
@@ -118,21 +121,31 @@ class LeverCollector(BaseCollector):
         Args:
             companies: List of company slugs (e.g., "netflix", "spotify")
             timeout: Request timeout in seconds
+            max_concurrent: Maximum concurrent requests (rate limiting)
+            delay_between_requests: Min/max seconds delay between requests
         """
         self.companies = companies or self.DEFAULT_COMPANIES
         self.timeout = timeout
+        self.max_concurrent = max_concurrent
+        self.delay_range = delay_between_requests
 
     async def collect(self, search_queries: list[str]) -> list[JobData]:
         """Collect jobs from Lever boards."""
         all_jobs: list[JobData] = []
         query_terms = [q.lower() for q in search_queries]
 
+        # Use semaphore to limit concurrent requests
+        semaphore = asyncio.Semaphore(self.max_concurrent)
+
+        async def fetch_with_rate_limit(company: str) -> list[JobData]:
+            async with semaphore:
+                # Add random delay before each request
+                delay = random.uniform(*self.delay_range)
+                await asyncio.sleep(delay)
+                return await self._fetch_company_jobs(session, company)
+
         async with aiohttp.ClientSession() as session:
-            # Fetch all companies concurrently
-            tasks = [
-                self._fetch_company_jobs(session, company)
-                for company in self.companies
-            ]
+            tasks = [fetch_with_rate_limit(company) for company in self.companies]
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
             for company_jobs in results:

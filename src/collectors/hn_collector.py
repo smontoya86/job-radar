@@ -161,8 +161,17 @@ class HNCollector(BaseCollector):
 
         text_lower = text.lower()
 
-        # Check if matches search queries
-        if not any(term in text_lower for term in query_terms):
+        # Check if matches search queries OR contains PM-related keywords
+        # Be more inclusive - let the scorer filter out irrelevant jobs
+        pm_keywords = [
+            "product manager", "product lead", "product director", "pm ",
+            " pm,", "ai ", "ml ", "machine learning", "search", "personalization",
+            "recommendation", "llm", "genai", "generative ai"
+        ]
+        query_match = any(term in text_lower for term in query_terms)
+        pm_match = any(kw in text_lower for kw in pm_keywords)
+
+        if not query_match and not pm_match:
             return None
 
         # Parse the comment

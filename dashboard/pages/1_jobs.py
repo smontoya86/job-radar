@@ -35,7 +35,8 @@ hide_applied = st.sidebar.checkbox("Hide Already Applied", value=True)
 
 source_filter = st.sidebar.multiselect(
     "Source",
-    ["indeed", "linkedin", "glassdoor", "remoteok", "greenhouse", "lever", "wellfound", "hn_whoishiring"],
+    ["serpapi", "jsearch", "ashby", "workday", "smartrecruiters", "search_discovery",
+     "email_alerts", "greenhouse", "lever", "remoteok", "hn_whoishiring", "adzuna"],
     default=[],
 )
 

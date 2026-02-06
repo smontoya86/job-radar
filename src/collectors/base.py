@@ -22,8 +22,22 @@ class JobData:
     posted_date: Optional[datetime] = None
     extra_data: dict = field(default_factory=dict)
 
+    @staticmethod
+    def _clean_nan(value: Optional[str]) -> Optional[str]:
+        """Convert 'nan'/'NaN'/'NAN' strings to None."""
+        if value is not None and value.strip().lower() == "nan":
+            return None
+        return value
+
     def __post_init__(self):
         """Normalize fields after initialization."""
+        # Sanitize "nan" strings from collectors (e.g., pandas NaN → str)
+        self.description = self._clean_nan(self.description)
+        cleaned_title = self._clean_nan(self.title)
+        self.title = cleaned_title if cleaned_title is not None else ""
+        cleaned_company = self._clean_nan(self.company)
+        self.company = cleaned_company if cleaned_company is not None else ""
+
         # Normalize remote detection from location
         if self.location:
             location_lower = self.location.lower()

@@ -136,7 +136,7 @@ def main():
 
                             # If it's an interview invite, update status
                             if parsed.email_type == EmailType.INTERVIEW_INVITE:
-                                app_service.update_status(app.id, "interview")
+                                app_service.update_status(app.id, "interviewing")
 
                     else:
                         # Link to existing and update

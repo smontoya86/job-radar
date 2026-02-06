@@ -9,7 +9,8 @@ if str(_project_root) not in sys.path:
 
 import streamlit as st
 
-from dashboard.common import get_session, settings
+from dashboard.common import get_session, sanitize_html, settings
+from src.onboarding.config_checker import is_configured, get_config_status
 
 
 def main():
@@ -104,16 +105,29 @@ def main():
                 except Exception as e:
                     st.error(f"Scan failed: {e}")
 
+    # Check if configured - show setup prompt if not
+    if not is_configured(_project_root):
+        st.warning("⚠️ **Job Radar needs to be configured before use.**")
+        st.markdown("""
+        Please complete the setup wizard to configure your job search profile.
+
+        **Go to the Setup page in the sidebar** or click below to get started.
+        """)
+        if st.button("🚀 Open Setup Wizard", type="primary"):
+            st.switch_page("pages/0_setup.py")
+        st.divider()
+
     # Main content - Home page
     st.markdown('<p class="main-header">🎯 Job Radar Dashboard</p>', unsafe_allow_html=True)
 
     # Overview metrics
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
 
     with get_session() as session:
         from sqlalchemy import func, select
 
         from src.persistence.models import Application, Job
+        from src.analytics.funnel import FunnelAnalytics
 
         # Total jobs found
         stmt = select(func.count(Job.id))
@@ -123,17 +137,23 @@ def main():
         stmt = select(func.count(Application.id))
         total_apps = session.execute(stmt).scalar() or 0
 
-        # Interviews scheduled
-        stmt = select(func.count(Application.id)).where(
-            Application.status.in_(["phone_screen", "interviewing"])
+        # Interviews (apps that reached phone_screen or beyond, using effective stage)
+        _funnel = FunnelAnalytics(session)
+        _stage_counts = _funnel._get_effective_stage_counts()
+        interviews = sum(
+            _stage_counts.get(s, 0)
+            for s in ("phone_screen", "interviewing", "offer", "accepted")
         )
-        interviews = session.execute(stmt).scalar() or 0
 
         # Offers
         stmt = select(func.count(Application.id)).where(
             Application.status.in_(["offer", "accepted"])
         )
         offers = session.execute(stmt).scalar() or 0
+
+        # Response rate & rejection rate
+        response_rate = _funnel.get_response_rate()
+        rejection_rate = _funnel.get_rejection_rate()
 
     with col1:
         st.metric("Jobs Found", total_jobs, help="Total jobs discovered by radar")
@@ -142,10 +162,16 @@ def main():
         st.metric("Applications", total_apps, help="Total applications submitted")
 
     with col3:
-        st.metric("Interviews", interviews, help="Active interviews")
+        st.metric("Interviews", interviews, help="Applications that reached an interview stage")
 
     with col4:
         st.metric("Offers", offers, help="Offers received")
+
+    with col5:
+        st.metric("Response Rate", f"{response_rate:.1f}%", help="% that received any response")
+
+    with col6:
+        st.metric("Rejection Rate", f"{rejection_rate:.1f}%", help="% of applications rejected")
 
     st.markdown("---")
 
@@ -163,13 +189,9 @@ def main():
 
             if recent_apps:
                 for app in recent_apps:
-                    status_class = f"status-{app.status}"
+                    status_class = f"status-{sanitize_html(app.status)}"
                     st.markdown(
-                        f"""
-                        **{app.company}** - {app.position}
-                        <span class="{status_class}">{app.status.title()}</span>
-                        | Applied: {app.applied_date.strftime('%m/%d/%Y') if app.applied_date else 'N/A'}
-                        """,
+                        f'**{sanitize_html(app.company)}** - {sanitize_html(app.position)} <span class="{status_class}">{sanitize_html(app.status.title())}</span> | Applied: {app.applied_date.strftime("%m/%d/%Y") if app.applied_date else "N/A"}',
                         unsafe_allow_html=True,
                     )
                     st.markdown("---")
@@ -256,6 +278,23 @@ def main():
         """,
         unsafe_allow_html=True,
     )
+
+
+def cli_main():
+    """Entry point for the `job-dashboard` console script.
+
+    Programmatically launches Streamlit so that `pip install -e .`
+    gives users a working `job-dashboard` command.
+    """
+    import sys as _sys
+    from streamlit.web.cli import main as st_main
+
+    _sys.argv = [
+        "streamlit", "run",
+        str(Path(__file__).resolve()),
+        "--server.headless=true",
+    ]
+    st_main()
 
 
 if __name__ == "__main__":
