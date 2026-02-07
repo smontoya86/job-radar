@@ -15,16 +15,16 @@ Job Radar is a two-part system designed to automate job discovery and applicatio
 │  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐  │
 │  │  COLLECTORS │───▶│   MATCHER   │───▶│    DEDUP    │───▶│  NOTIFIER   │  │
 │  │             │    │   & SCORER  │    │             │    │             │  │
-│  │ • RemoteOK  │    │             │    │ Fingerprint │    │   Slack     │  │
-│  │ • Greenhouse│    │ Description │    │   based     │    │  Webhook    │  │
-│  │ • Lever     │    │  -centric   │    │ dedup with  │    │             │  │
-│  │ • HN        │    │  scoring    │    │  30-day     │    │ Rich cards  │  │
-│  │ • Adzuna    │    │             │    │  lookback   │    │ with score  │  │
+│  │ 14 sources: │    │             │    │ Fingerprint │    │   Slack     │  │
+│  │ ATS boards  │    │ Description │    │   based     │    │  Webhook    │  │
+│  │ Public APIs │    │  -centric   │    │ dedup with  │    │             │  │
+│  │ Aggregators │    │  scoring    │    │  30-day     │    │ Rich cards  │  │
+│  │ (see below) │    │             │    │  lookback   │    │ with score  │  │
 │  └─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘  │
 │         │                  │                  │                  │         │
 │         ▼                  ▼                  ▼                  ▼         │
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │                         SQLite DATABASE                             │   │
+│  │                    DATABASE (PostgreSQL / SQLite)                    │   │
 │  │  ┌──────┐ ┌──────────────┐ ┌────────┐ ┌──────────────┐ ┌────────┐ │   │
 │  │  │ Jobs │ │ Applications │ │Resumes │ │ EmailImports │ │ Status │ │   │
 │  │  │      │ │              │ │        │ │              │ │History │ │   │
@@ -72,13 +72,20 @@ job-radar/
 │   ├── collectors/            # Job source modules
 │   │   ├── base.py            # BaseCollector, JobData dataclass
 │   │   ├── utils.py           # Shared utilities (parse_salary, parse_date, etc.)
-│   │   ├── jobspy_collector.py
 │   │   ├── remoteok_collector.py
-│   │   ├── adzuna_collector.py
 │   │   ├── greenhouse_collector.py
 │   │   ├── lever_collector.py
+│   │   ├── ashby_collector.py
+│   │   ├── workday_collector.py
+│   │   ├── smartrecruiters_collector.py
 │   │   ├── hn_collector.py
-│   │   └── wellfound_collector.py
+│   │   ├── adzuna_collector.py
+│   │   ├── serpapi_collector.py
+│   │   ├── jsearch_collector.py
+│   │   ├── search_discovery_collector.py
+│   │   ├── remotive_collector.py
+│   │   ├── himalayas_collector.py
+│   │   └── themuse_collector.py
 │   │
 │   ├── matching/
 │   │   ├── keyword_matcher.py    # Description-centric scoring (v2)
@@ -177,7 +184,7 @@ job-radar/
 ├── launchd/
 │   └── com.jobradar.plist.example
 │
-├── data/                         # SQLite database (Docker volume)
+├── data/                         # SQLite database (local dev only)
 └── logs/                         # Application logs
 ```
 
@@ -198,19 +205,32 @@ class BaseCollector(ABC):
         pass
 ```
 
-| Collector | Source | Method | Notes |
-|-----------|--------|--------|-------|
-| `RemoteOKCollector` | remoteok.com | Public API | Remote-only jobs |
-| `GreenhouseCollector` | Greenhouse boards | Public API | 130+ tech companies |
-| `LeverCollector` | Lever boards | Public API | 75+ startups |
-| `HNCollector` | Hacker News | Algolia API | Monthly "Who's Hiring" |
-| `AdzunaCollector` | Adzuna | API (key required) | Optional |
+| Collector | Source | Type | API Key | Notes |
+|-----------|--------|------|:---:|-------|
+| `RemoteOKCollector` | remoteok.com | Public API | No | Remote-only jobs |
+| `GreenhouseCollector` | Greenhouse boards | Public ATS | No | 130+ tech companies |
+| `LeverCollector` | Lever boards | Public ATS | No | 75+ startups |
+| `AshbyCollector` | Ashby boards | Public ATS | No | Growing startup ATS |
+| `WorkdayCollector` | Workday career sites | Public ATS | No | Large enterprises |
+| `SmartRecruitersCollector` | SmartRecruiters | Public ATS | No | Enterprise career sites |
+| `HNCollector` | Hacker News | Public API | No | Monthly "Who's Hiring" |
+| `RemotiveCollector` | Remotive | Public API | No | Remote job board |
+| `HimalayasCollector` | Himalayas | Public API | No | Remote company profiles |
+| `TheMuseCollector` | TheMuse | Public API | No | Company career content |
+| `AdzunaCollector` | Adzuna | API | Yes | UK/US/AU aggregator |
+| `SerpApiCollector` | Google Jobs via SerpApi | API | Yes | Aggregates Indeed, LinkedIn, Glassdoor |
+| `JSearchCollector` | JSearch (RapidAPI) | API | Yes | Multi-source aggregator |
+| `SearchDiscoveryCollector` | SerpApi `site:` queries | API | SerpApi key | Discovers new ATS boards |
+
+All sources use public APIs or authorized data. JobSpy and Wellfound (high-risk scrapers) were removed and replaced with these compliant alternatives.
 
 **Collector-Specific Notes:**
 
 - **Greenhouse**: List endpoint does NOT include descriptions. Must fetch each job individually. Returns HTML-encoded content - decode with `html.unescape()` before BeautifulSoup.
 - **Lever**: Returns full job data including description. May include HTML - strip with BeautifulSoup.
-- **HN**: Scrapes monthly "Who is hiring?" threads via HN Algolia API.
+- **HN**: Parses monthly "Who is hiring?" threads via HN Algolia API.
+- **SerpApi + SearchDiscovery**: SearchDiscovery uses SerpApi to find new company career pages via `site:` queries, then SerpApi collects from Google Jobs index.
+- **ATS Collectors (Ashby, Workday, SmartRecruiters)**: Query public career page APIs for configured company boards.
 
 **Rate Limiting:**
 
@@ -265,7 +285,7 @@ Example: "stripe:senior ai product manager"
 ```
 
 - 30-day lookback window
-- Fingerprints stored in SQLite
+- Fingerprints stored in database
 - Batch dedup within same scan
 
 ---
@@ -319,9 +339,15 @@ credentials.json → OAuth2 Flow → token.json → API Access
 
 When an email is processed, `create_from_email()` automatically:
 1. Finds or creates the Application by company name
-2. Calls `_try_link_to_job()` to link to a Job record by company name
-3. Copies `Job.description` to `Application.job_description` for analysis
-4. Updates status based on email type (rejection, interview invite, offer)
+2. Infers the source from the email sender domain (maps 30+ ATS domains like `greenhouse-mail.io` → "greenhouse", `ashbyhq.com` → "ashby")
+3. Calls `_try_link_to_job()` to link to a Job record by company name (exact + fuzzy matching)
+4. Copies `Job.description` to `Application.job_description` for analysis
+5. Updates status based on email type (rejection, interview invite, offer)
+
+**Email Parser Validation:**
+- Company names are validated: rejects names >50 chars or containing sentence fragments
+- Positions are cleaned: strips "the" prefix, rejects email boilerplate phrases
+- Source is inferred from sender domain rather than defaulting to "email_import"
 
 ---
 
@@ -425,7 +451,7 @@ Hook point: after dedup, before notification in `src/main.py`.
 - `dashboard` - Streamlit UI at http://localhost:8501
 - `scanner` - Background job radar
 
-**Data:** Persisted in `./data/job_radar.db`
+**Data:** Docker uses PostgreSQL (data persisted in a Docker volume). Local dev uses SQLite at `./data/job_radar.db`.
 
 ### Option 2: Local with launchd (macOS)
 
@@ -446,7 +472,7 @@ Runs scanner every 30 minutes with Supabase PostgreSQL. See `.github/workflows/j
 |-------|------------|---------|
 | Language | Python 3.12 | Core runtime |
 | Web Framework | Streamlit | Dashboard UI |
-| Database | SQLite + SQLAlchemy 2.0 | Persistence |
+| Database | PostgreSQL (Docker) / SQLite (local) + SQLAlchemy 2.0 | Persistence |
 | Scheduler | APScheduler | Background jobs |
 | HTTP Client | aiohttp | Async API calls |
 | Charts | Plotly | Analytics |
@@ -470,17 +496,19 @@ Runs scanner every 30 minutes with Supabase PostgreSQL. See `.github/workflows/j
 
 ## Test Structure
 
-211+ tests organized as:
+356 tests organized as:
 
 | File | Tests | Coverage |
 |------|-------|----------|
 | `test_onboarding.py` | 48 | Setup wizard validation |
 | `test_gmail.py` | - | Email parser & classification |
-| `test_matching.py` | - | Keyword matcher, scorer, protocol |
+| `test_matching.py` | - | Keyword matcher, scorer, protocol, title gating |
 | `test_collectors.py` | - | Collector parsing |
 | `test_analytics.py` | - | Funnel & source analytics |
-| `test_services.py` | 27 | Application/resume services, _try_link_to_job |
+| `test_services.py` | - | Application/resume services, _try_link_to_job |
 | `test_models.py` | - | ORM model tests |
+| `test_audit_fixes.py` | 51 | Analytics accuracy, data quality, source inference |
+| `test_infrastructure.py` | - | Logging, database, collector infrastructure |
 | `unit/test_auth_service.py` | - | Auth registration, login, OAuth |
 | `unit/test_user_model.py` | - | User model & relationships |
 | `security/test_data_isolation.py` | - | Multi-tenant data isolation |

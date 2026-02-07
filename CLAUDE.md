@@ -215,7 +215,8 @@ print(settings.database_url)
 
 ## Database
 
-- **Location:** `data/job_radar.db` (SQLite, in data/ directory)
+- **Docker:** PostgreSQL 16 (managed by docker-compose, data in Docker volume)
+- **Local dev:** SQLite at `data/job_radar.db`
 - **ORM:** SQLAlchemy 2.0 with declarative models
 - **Models:** Job, Application, Resume, Interview, EmailImport, StatusHistory
 
@@ -458,32 +459,26 @@ The onboarding system (`src/onboarding/`) helps new users configure Job Radar:
 - Admin dashboard for user management
 - Billing/tier enforcement
 
-### Compliant Collector Transition
-**Goal:** Replace high-risk scrapers (JobSpy/Wellfound) with legal data sources.
+### Compliant Collector Transition (COMPLETED)
+High-risk scrapers (JobSpy/Wellfound) have been removed and replaced with 14 compliant sources.
 
-**Current risk:**
-| Collector | Risk | Action |
-|-----------|------|--------|
-| JobSpy (Indeed/LinkedIn/Glassdoor) | HIGH | Replace with SerpApi + JSearch |
-| Wellfound | HIGH | Replace with email alerts |
-| RemoteOK, Greenhouse, Lever, HN, Adzuna | LOW | Keep |
-
-**New collectors planned:**
-- **SerpApi** — Google Jobs API (~$50/mo for 5K searches), covers Indeed/LinkedIn/Glassdoor through Google's index
-- **JSearch** — RapidAPI aggregator (free tier: 500 req/mo)
-- **Ashby** — Public ATS API (growing startup ATS)
-- **Workday** — Public career site API (large enterprises)
-- **SmartRecruiters** — Public job postings API
-- **Email Alert Parser** — Parse LinkedIn/Google/Indeed job alert emails
-- **Search Discovery** — SerpApi `site:` queries to discover new ATS boards
-
-**AlertParser protocol design:**
-```python
-class AlertParser(Protocol):
-    def parse(self, email_html: str) -> list[JobData]: ...
-```
-- Heuristic implementation first (regex/BeautifulSoup)
-- LLM implementation later (same interface, better extraction)
+**Active collectors (all use public APIs or authorized data):**
+| Collector | Type | API Key | Status |
+|-----------|------|:---:|--------|
+| RemoteOK | Public API | No | Active |
+| Greenhouse | Public ATS | No | Active |
+| Lever | Public ATS | No | Active |
+| Ashby | Public ATS | No | Active |
+| Workday | Public ATS | No | Active |
+| SmartRecruiters | Public ATS | No | Active |
+| HN Who's Hiring | Public API | No | Active |
+| Remotive | Public API | No | Active |
+| Himalayas | Public API | No | Active |
+| TheMuse | Public API | No | Active |
+| SerpApi | Google Jobs | Yes | Active (optional) |
+| JSearch | RapidAPI | Yes | Active (optional) |
+| Adzuna | API | Yes | Active (optional) |
+| SearchDiscovery | SerpApi `site:` | SerpApi key | Active (optional) |
 
 ### Scorer Protocol (AI Readiness)
 **Implemented:**
