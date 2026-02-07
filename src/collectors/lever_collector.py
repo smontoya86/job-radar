@@ -1,5 +1,6 @@
 """Lever job board collector."""
 import asyncio
+import logging
 import random
 from datetime import datetime
 from typing import Optional
@@ -7,6 +8,9 @@ from typing import Optional
 import aiohttp
 
 from .base import BaseCollector, JobData
+from .utils import http_get_json
+
+logger = logging.getLogger(__name__)
 
 
 class LeverCollector(BaseCollector):
@@ -166,28 +170,25 @@ class LeverCollector(BaseCollector):
         url = f"https://api.lever.co/v0/postings/{company}"
 
         try:
-            async with session.get(
+            data = await http_get_json(
+                session,
                 url,
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
-            ) as response:
-                if response.status != 200:
-                    return []
+            )
+            if data is None:
+                return []
 
-                data = await response.json()
-                jobs = []
+            jobs = []
 
-                for job_data in data:
-                    job = self._parse_job(job_data, company)
-                    if job:
-                        jobs.append(job)
+            for job_data in data:
+                job = self._parse_job(job_data, company)
+                if job:
+                    jobs.append(job)
 
-                return jobs
+            return jobs
 
-        except asyncio.TimeoutError:
-            print(f"Lever timeout for {company}")
-            return []
         except Exception as e:
-            print(f"Lever error for {company}: {e}")
+            logger.error("Lever error for %s: %s", company, e)
             return []
 
     def _matches_queries(self, job: JobData, query_terms: list[str]) -> bool:
@@ -261,5 +262,5 @@ class LeverCollector(BaseCollector):
                 },
             )
         except Exception as e:
-            print(f"Error parsing Lever job: {e}")
+            logger.error("Error parsing Lever job: %s", e)
             return None

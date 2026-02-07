@@ -1,5 +1,6 @@
 """Gmail API client."""
 import base64
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 from email.utils import parsedate_to_datetime
@@ -8,6 +9,8 @@ from typing import Optional
 from googleapiclient.discovery import build
 
 from .auth import GmailAuth
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -105,7 +108,7 @@ class GmailClient:
                     break
 
             except Exception as e:
-                print(f"Gmail search error: {e}")
+                logger.error("Gmail search error: %s", e)
                 break
 
         return message_ids[:max_results]
@@ -132,7 +135,7 @@ class GmailClient:
             return self._parse_message(result)
 
         except Exception as e:
-            print(f"Gmail get message error: {e}")
+            logger.error("Gmail get message error: %s", e)
             return None
 
     def get_messages(self, message_ids: list[str]) -> list[EmailMessage]:

@@ -10,6 +10,7 @@ This script:
 Usage:
     python scripts/reprocess_emails.py [--dry-run]
 """
+import logging
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -23,10 +24,13 @@ sys.path.insert(0, str(project_root))
 from sqlalchemy import select, func
 
 from config.settings import settings
+from src.logging_config import setup_logging
 from src.persistence.database import get_session, init_db
 from src.persistence.models import Application, EmailImport
 from src.gmail.parser import EmailParser, EmailType
 from src.tracking.application_service import ApplicationService
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -89,40 +93,41 @@ def is_valid_company_name(name: str) -> bool:
 
 
 def find_application_for_company(session, company: str) -> Optional[Application]:
-    """Find an application matching the company name."""
+    """Find an application matching the company name using indexed company_key."""
     if not company:
         return None
 
+    from src.persistence.models import normalize_company_key
+
+    key = normalize_company_key(company)
+
+    # Fast indexed lookup
+    app = session.execute(
+        select(Application).where(Application.company_key == key)
+    ).scalars().first()
+
+    if app:
+        return app
+
+    # Fallback: partial match for edge cases
     normalized = normalize_company(company)
+    escaped = company.replace("%", r"\%").replace("_", r"\_")
+    app = session.execute(
+        select(Application).where(
+            Application.company.ilike(f"%{escaped}%", escape="\\")
+        ).limit(1)
+    ).scalars().first()
 
-    # Get all applications
-    apps = session.execute(select(Application)).scalars().all()
-
-    for app in apps:
-        app_normalized = normalize_company(app.company)
-
-        # Exact match
-        if app_normalized == normalized:
-            return app
-
-        # Partial match (one contains the other)
-        if normalized in app_normalized or app_normalized in normalized:
-            return app
-
-        # Handle "Meetcleo" vs "Cleo" type mismatches
-        if normalized.replace("meet", "") == app_normalized or app_normalized.replace("meet", "") == normalized:
-            return app
-
-    return None
+    return app
 
 
 def reprocess_emails(dry_run: bool = False):
     """Reprocess all emails with the improved parser."""
-    print("=" * 60)
-    print("Reprocessing emails with improved parser")
-    print("=" * 60)
-    print(f"Dry run: {dry_run}")
-    print()
+    logger.info("=" * 60)
+    logger.info("Reprocessing emails with improved parser")
+    logger.info("=" * 60)
+    logger.info("Dry run: %s", dry_run)
+    logger.info("")
 
     init_db()
     parser = EmailParser()
@@ -141,8 +146,8 @@ def reprocess_emails(dry_run: bool = False):
         emails = session.execute(select(EmailImport)).scalars().all()
         stats["total_emails"] = len(emails)
 
-        print(f"Found {len(emails)} email imports to process")
-        print()
+        logger.info("Found %s email imports to process", len(emails))
+        logger.info("")
 
         for email_import in emails:
             # Create fake email object for parsing
@@ -164,8 +169,8 @@ def reprocess_emails(dry_run: bool = False):
 
             # Update email type if it changed from unknown to something specific
             if old_type == "unknown" and new_type != EmailType.UNKNOWN:
-                print(f"[TYPE] {email_import.subject[:50]}...")
-                print(f"  Old type: {old_type} -> New type: {new_type.value}")
+                logger.info("[TYPE] %s...", email_import.subject[:50])
+                logger.info("  Old type: %s -> New type: %s", old_type, new_type.value)
                 if not dry_run:
                     email_import.email_type = new_type.value
                     email_import.parsed_data = {
@@ -177,8 +182,8 @@ def reprocess_emails(dry_run: bool = False):
             # Only update company if we got a different/better result
             if new_company and new_company != old_company and is_valid_company_name(new_company):
                 stats["reparsed"] += 1
-                print(f"[REPARSE] {email_import.subject[:50]}...")
-                print(f"  Old company: {old_company} -> New company: {new_company}")
+                logger.info("[REPARSE] %s...", email_import.subject[:50])
+                logger.info("  Old company: %s -> New company: %s", old_company, new_company)
 
                 if not dry_run:
                     email_import.parsed_data = {
@@ -192,7 +197,7 @@ def reprocess_emails(dry_run: bool = False):
                 app = find_application_for_company(session, company)
                 if app:
                     stats["linked"] += 1
-                    print(f"[LINK] {email_import.email_type}: '{company}' -> Application '{app.company}'")
+                    logger.info("[LINK] %s: '%s' -> Application '%s'", email_import.email_type, company, app.company)
 
                     if not dry_run:
                         email_import.application_id = app.id
@@ -201,7 +206,7 @@ def reprocess_emails(dry_run: bool = False):
                     # Update application status based on email type
                     app_service = ApplicationService(session)
                     if email_import.email_type == "rejection" and app.status not in ["rejected", "withdrawn"]:
-                        print(f"  [STATUS] {app.company}: {app.status} -> rejected")
+                        logger.info("  [STATUS] %s: %s -> rejected", app.company, app.status)
                         stats["status_updated"] += 1
                         if not dry_run:
                             app_service.update_status(
@@ -210,7 +215,7 @@ def reprocess_emails(dry_run: bool = False):
                             )
 
                     elif email_import.email_type == "interview_invite" and app.status in ["applied"]:
-                        print(f"  [STATUS] {app.company}: {app.status} -> interviewing")
+                        logger.info("  [STATUS] %s: %s -> interviewing", app.company, app.status)
                         stats["status_updated"] += 1
                         if not dry_run:
                             app_service.update_status(
@@ -224,7 +229,7 @@ def reprocess_emails(dry_run: bool = False):
                 if is_valid_company_name(company):
                     app = find_application_for_company(session, company)
                     if not app:
-                        print(f"[CREATE] New application for '{company}' from confirmation email")
+                        logger.info("[CREATE] New application for '%s' from confirmation email", company)
                         stats["apps_created"] += 1
 
                         if not dry_run:
@@ -243,21 +248,22 @@ def reprocess_emails(dry_run: bool = False):
         if not dry_run:
             session.commit()
 
-    print()
-    print("=" * 60)
-    print("Summary:")
-    print(f"  Total emails: {stats['total_emails']}")
-    print(f"  Re-parsed with new company: {stats['reparsed']}")
-    print(f"  Linked to applications: {stats['linked']}")
-    print(f"  Statuses updated: {stats['status_updated']}")
-    print(f"  New applications created: {stats['apps_created']}")
-    print("=" * 60)
+    logger.info("")
+    logger.info("=" * 60)
+    logger.info("Summary:")
+    logger.info("  Total emails: %s", stats['total_emails'])
+    logger.info("  Re-parsed with new company: %s", stats['reparsed'])
+    logger.info("  Linked to applications: %s", stats['linked'])
+    logger.info("  Statuses updated: %s", stats['status_updated'])
+    logger.info("  New applications created: %s", stats['apps_created'])
+    logger.info("=" * 60)
 
     if dry_run:
-        print("\nThis was a dry run. No changes were made.")
-        print("Run without --dry-run to apply changes.")
+        logger.info("This was a dry run. No changes were made.")
+        logger.info("Run without --dry-run to apply changes.")
 
 
 if __name__ == "__main__":
+    setup_logging()
     dry_run = "--dry-run" in sys.argv
     reprocess_emails(dry_run=dry_run)

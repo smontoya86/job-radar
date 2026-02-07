@@ -1,5 +1,6 @@
 """SmartRecruiters job board collector."""
 import asyncio
+import logging
 import random
 from datetime import datetime
 from typing import Optional
@@ -8,6 +9,9 @@ import aiohttp
 from bs4 import BeautifulSoup
 
 from .base import BaseCollector, JobData
+from .utils import http_get_json
+
+logger = logging.getLogger(__name__)
 
 
 class SmartRecruitersCollector(BaseCollector):
@@ -103,32 +107,34 @@ class SmartRecruitersCollector(BaseCollector):
         }
 
         try:
-            async with session.get(
+            data = await http_get_json(
+                session,
                 url,
                 params=params,
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
                 headers={"Accept": "application/json"},
-            ) as response:
-                if response.status != 200:
-                    return []
+            )
+            if data is None:
+                return []
 
-                data = await response.json()
-                jobs = []
+            jobs = []
 
-                for posting in data.get("content", []):
-                    job = await self._parse_posting(
-                        session, company, posting
-                    )
-                    if job:
-                        jobs.append(job)
+            postings = data.get("content", [])
+            for i, posting in enumerate(postings):
+                job = await self._parse_posting(
+                    session, company, posting
+                )
+                if job:
+                    jobs.append(job)
 
-                return jobs
+                # Rate limit description fetches (1-2s between each)
+                if i < len(postings) - 1:
+                    await asyncio.sleep(random.uniform(1.0, 2.0))
 
-        except asyncio.TimeoutError:
-            print(f"SmartRecruiters timeout for {company}")
-            return []
+            return jobs
+
         except Exception as e:
-            print(f"SmartRecruiters error for {company}: {e}")
+            logger.error("SmartRecruiters error for %s: %s", company, e)
             return []
 
     async def _parse_posting(
@@ -209,7 +215,7 @@ class SmartRecruitersCollector(BaseCollector):
                 },
             )
         except Exception as e:
-            print(f"Error parsing SmartRecruiters posting: {e}")
+            logger.error("Error parsing SmartRecruiters posting: %s", e)
             return None
 
     async def _fetch_description(
@@ -224,29 +230,23 @@ class SmartRecruitersCollector(BaseCollector):
             f"/{company_slug}/postings/{posting_id}"
         )
 
-        try:
-            async with session.get(
-                url,
-                timeout=aiohttp.ClientTimeout(total=10),
-                headers={"Accept": "application/json"},
-            ) as response:
-                if response.status != 200:
-                    return None
-
-                data = await response.json()
-
-                # Description is nested under jobAd.sections.jobDescription.text
-                job_ad = data.get("jobAd", {})
-                sections = job_ad.get("sections", {})
-                job_desc = sections.get("jobDescription", {})
-                html_text = job_desc.get("text", "")
-
-                if html_text:
-                    soup = BeautifulSoup(html_text, "html.parser")
-                    return soup.get_text(separator=" ", strip=True)
-
-                return None
-
-        except Exception:
-            # Description fetching is best-effort
+        data = await http_get_json(
+            session,
+            url,
+            timeout=aiohttp.ClientTimeout(total=10),
+            headers={"Accept": "application/json"},
+        )
+        if data is None:
             return None
+
+        # Description is nested under jobAd.sections.jobDescription.text
+        job_ad = data.get("jobAd", {})
+        sections = job_ad.get("sections", {})
+        job_desc = sections.get("jobDescription", {})
+        html_text = job_desc.get("text", "")
+
+        if html_text:
+            soup = BeautifulSoup(html_text, "html.parser")
+            return soup.get_text(separator=" ", strip=True)
+
+        return None

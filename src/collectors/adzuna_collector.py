@@ -1,11 +1,15 @@
 """Adzuna job collector."""
 import asyncio
+import logging
 from datetime import datetime
 from typing import Optional
 
 import aiohttp
 
 from .base import BaseCollector, JobData
+from .utils import http_get_json
+
+logger = logging.getLogger(__name__)
 
 
 class AdzunaCollector(BaseCollector):
@@ -38,7 +42,7 @@ class AdzunaCollector(BaseCollector):
     async def collect(self, search_queries: list[str]) -> list[JobData]:
         """Collect jobs from Adzuna API."""
         if not self.app_id or not self.app_key:
-            print("Adzuna credentials not configured, skipping")
+            logger.info("Adzuna credentials not configured, skipping")
             return []
 
         all_jobs: list[JobData] = []
@@ -49,7 +53,7 @@ class AdzunaCollector(BaseCollector):
                     jobs = await self._search(session, query)
                     all_jobs.extend(jobs)
                 except Exception as e:
-                    print(f"Adzuna error for query '{query}': {e}")
+                    logger.error("Adzuna error for query '%s': %s", query, e)
 
         return all_jobs
 
@@ -65,20 +69,18 @@ class AdzunaCollector(BaseCollector):
             "content-type": "application/json",
         }
 
-        async with session.get(url, params=params) as response:
-            if response.status != 200:
-                print(f"Adzuna API returned status {response.status}")
-                return []
+        data = await http_get_json(session, url, params=params)
+        if data is None:
+            return []
 
-            data = await response.json()
-            jobs = []
+        jobs = []
 
-            for result in data.get("results", []):
-                job = self._parse_job(result)
-                if job:
-                    jobs.append(job)
+        for result in data.get("results", []):
+            job = self._parse_job(result)
+            if job:
+                jobs.append(job)
 
-            return jobs
+        return jobs
 
     def _parse_job(self, data: dict) -> Optional[JobData]:
         """Parse Adzuna job data to JobData."""
@@ -132,5 +134,5 @@ class AdzunaCollector(BaseCollector):
                 extra_data={"category": data.get("category", {}).get("label")},
             )
         except Exception as e:
-            print(f"Error parsing Adzuna job: {e}")
+            logger.error("Error parsing Adzuna job: %s", e)
             return None

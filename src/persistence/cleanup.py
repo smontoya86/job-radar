@@ -1,10 +1,13 @@
 """Database cleanup utilities for storage optimization."""
+import logging
 from datetime import datetime, timezone, timedelta
 
 from sqlalchemy import delete, select, update
 
 from src.persistence.database import get_session
 from src.persistence.models import Job
+
+logger = logging.getLogger(__name__)
 
 
 def delete_old_jobs(days: int = 60) -> int:
@@ -87,15 +90,15 @@ def cleanup_stale_data() -> dict:
     Returns:
         Dictionary with counts of each cleanup operation
     """
-    print("Running database cleanup...")
+    logger.info("Running database cleanup...")
 
     deleted = delete_old_jobs(days=60)
     if deleted > 0:
-        print(f"  Deleted {deleted} jobs older than 60 days")
+        logger.info("Deleted %s jobs older than 60 days", deleted)
 
     truncated = truncate_descriptions(max_chars=2000)
     if truncated > 0:
-        print(f"  Truncated {truncated} long descriptions")
+        logger.info("Truncated %s long descriptions", truncated)
 
     return {
         "deleted_jobs": deleted,

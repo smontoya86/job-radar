@@ -1,14 +1,20 @@
 #!/usr/bin/env python3
 """Setup script for Gmail OAuth authentication."""
+import logging
 import sys
 from pathlib import Path
 
 from scripts.bootstrap import settings
 from src.gmail.auth import GmailAuth
+from src.logging_config import setup_logging
+
+logger = logging.getLogger(__name__)
 
 
 def main():
     """Run Gmail OAuth setup."""
+    setup_logging()
+
     print("Gmail OAuth Setup")
     print("=" * 50)
     print()
@@ -18,7 +24,7 @@ def main():
 
     # Check for credentials file
     if not credentials_path.exists():
-        print("ERROR: credentials.json not found!")
+        logger.error("credentials.json not found!")
         print()
         print("To set up Gmail integration:")
         print("1. Go to https://console.cloud.google.com")
@@ -27,10 +33,10 @@ def main():
         print("4. Go to Credentials > Create Credentials > OAuth 2.0 Client ID")
         print("5. Choose 'Desktop app' as application type")
         print("6. Download the JSON and save as 'credentials.json'")
-        print(f"7. Place it in: {credentials_path.absolute()}")
+        print("7. Place it in: %s" % credentials_path.absolute())
         return 1
 
-    print(f"Found credentials file: {credentials_path}")
+    logger.info("Found credentials file: %s", credentials_path)
     print()
 
     # Initialize auth
@@ -41,12 +47,12 @@ def main():
 
     # Check if already authenticated
     if token_path.exists():
-        print("Existing token found. Testing...")
+        logger.info("Existing token found. Testing...")
         if auth.is_authenticated():
-            print("Already authenticated! Gmail is ready to use.")
+            logger.info("Already authenticated! Gmail is ready to use.")
             return 0
         else:
-            print("Token expired or invalid. Re-authenticating...")
+            logger.warning("Token expired or invalid. Re-authenticating...")
 
     # Run OAuth flow
     print()
@@ -57,16 +63,14 @@ def main():
     credentials = auth.get_credentials()
 
     if credentials:
-        print()
-        print("Authentication successful!")
-        print(f"Token saved to: {token_path}")
+        logger.info("Authentication successful!")
+        logger.info("Token saved to: %s", token_path)
         print()
         print("Gmail integration is now ready.")
         print("You can run the email importer to fetch job-related emails.")
         return 0
     else:
-        print()
-        print("Authentication failed!")
+        logger.error("Authentication failed!")
         print("Please check your credentials and try again.")
         return 1
 

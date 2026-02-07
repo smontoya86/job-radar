@@ -1,5 +1,6 @@
 """Search Discovery collector — discovers new company job boards via SerpApi site: queries."""
 import asyncio
+import logging
 import re
 from datetime import datetime
 from typing import Optional
@@ -7,6 +8,9 @@ from typing import Optional
 import aiohttp
 
 from .base import BaseCollector, JobData
+from .utils import http_get_json
+
+logger = logging.getLogger(__name__)
 
 
 class SearchDiscoveryCollector(BaseCollector):
@@ -66,7 +70,7 @@ class SearchDiscoveryCollector(BaseCollector):
             List of JobData objects representing discovered job board pages.
         """
         if not self.api_key:
-            print("Search Discovery: no SerpApi key configured, skipping")
+            logger.info("Search Discovery: no SerpApi key configured, skipping")
             return []
 
         all_jobs: list[JobData] = []
@@ -82,9 +86,9 @@ class SearchDiscoveryCollector(BaseCollector):
                         jobs = await self._search(session, query, domain)
                         all_jobs.extend(jobs)
                     except Exception as e:
-                        print(
-                            f"Search Discovery error for "
-                            f"'{query}' on {domain}: {e}"
+                        logger.error(
+                            "Search Discovery error for '%s' on %s: %s",
+                            query, domain, e,
                         )
 
                     queries_executed += 1
@@ -118,23 +122,18 @@ class SearchDiscoveryCollector(BaseCollector):
             "api_key": self.api_key,
         }
 
-        async with session.get(self.BASE_URL, params=params) as response:
-            if response.status != 200:
-                print(
-                    f"Search Discovery: SerpApi returned status "
-                    f"{response.status} for '{query}' on {domain}"
-                )
-                return []
+        data = await http_get_json(session, self.BASE_URL, params=params)
+        if data is None:
+            return []
 
-            data = await response.json()
-            jobs: list[JobData] = []
+        jobs: list[JobData] = []
 
-            for result in data.get("organic_results", []):
-                job = self._parse_result(result, domain)
-                if job:
-                    jobs.append(job)
+        for result in data.get("organic_results", []):
+            job = self._parse_result(result, domain)
+            if job:
+                jobs.append(job)
 
-            return jobs
+        return jobs
 
     def _parse_result(
         self, result: dict, domain: str
@@ -175,7 +174,7 @@ class SearchDiscoveryCollector(BaseCollector):
                 },
             )
         except Exception as e:
-            print(f"Search Discovery: error parsing result: {e}")
+            logger.error("Search Discovery: error parsing result: %s", e)
             return None
 
     def _extract_company(self, url: str, domain: str) -> str:

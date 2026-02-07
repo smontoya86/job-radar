@@ -65,18 +65,21 @@ class SourceAnalytics:
             if source is None:
                 source = "Unknown"
 
-            # Get response count
+            # Get response count (withdrawn counts as response — they got a response before withdrawing)
             response_statuses = [
                 "phone_screen",
                 "interviewing",
                 "offer",
                 "accepted",
                 "rejected",
+                "withdrawn",
             ]
             responses = self._count_by_source_status(source, response_statuses, start_date)
 
             # Get interview count using Interview records (highest stage reached)
             interviews = self._count_interviews_by_source(source, start_date)
+            # Ensure logical consistency: interviews can't exceed responses
+            interviews = min(interviews, responses)
 
             # Get offer count
             offer_statuses = ["offer", "accepted"]

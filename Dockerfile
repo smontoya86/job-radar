@@ -34,8 +34,8 @@ COPY scripts/ ./scripts/
 RUN mkdir -p /app/logs /app/data
 
 # Default environment variables
-ENV DATABASE_URL=sqlite:////app/data/job_radar.db \
-    DASHBOARD_PORT=8501
+# DATABASE_URL is set by docker-compose (PostgreSQL) or .env (SQLite for local dev)
+ENV DASHBOARD_PORT=8501
 
 # Expose Streamlit port
 EXPOSE 8501

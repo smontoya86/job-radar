@@ -412,3 +412,187 @@ class TestScorerProtocol:
 
         assert enriched_job is job
         assert enriched_result is result
+
+
+class TestTitleGating:
+    """Tests that irrelevant titles are filtered even with matching keywords.
+
+    The scoring algorithm should require the job title to contain a core role
+    term (like 'product manager') for a match — unless the job is at a target
+    company. This prevents 'Senior Software Engineer' roles with 'AI' in the
+    description from appearing in results.
+    """
+
+    def test_software_engineer_with_ai_keywords_rejected(self, test_profile):
+        """A Software Engineer job mentioning AI should NOT match."""
+        matcher = KeywordMatcher(test_profile)
+
+        job = JobData(
+            title="Senior Software Engineer",
+            company="Random Startup",
+            url="http://test.com",
+            source="test",
+            description="Work on AI and ML systems. Build search infrastructure.",
+        )
+
+        result = matcher.match(job)
+        assert result.matched is False, (
+            f"'Senior Software Engineer' should not match even with AI keywords. "
+            f"Score: {result.score}"
+        )
+
+    def test_security_engineer_with_ai_keywords_rejected(self, test_profile):
+        """A Security Engineer job mentioning AI should NOT match."""
+        matcher = KeywordMatcher(test_profile)
+
+        job = JobData(
+            title="Distinguished Security Engineer",
+            company="Random Corp",
+            url="http://test.com",
+            source="test",
+            description="AI-powered security systems. Machine learning for threat detection.",
+        )
+
+        result = matcher.match(job)
+        assert result.matched is False
+
+    def test_technical_program_manager_rejected(self, test_profile):
+        """A Technical Program Manager is NOT a Product Manager."""
+        matcher = KeywordMatcher(test_profile)
+
+        job = JobData(
+            title="Technical Program Manager",
+            company="Random Co",
+            url="http://test.com",
+            source="test",
+            description="Manage AI/ML programs. Coordinate search and ML teams.",
+        )
+
+        result = matcher.match(job)
+        assert result.matched is False
+
+    def test_engineering_manager_rejected(self, test_profile):
+        """An Engineering Manager with AI keywords should NOT match."""
+        matcher = KeywordMatcher(test_profile)
+
+        job = JobData(
+            title="Engineering Manager, ML Platform",
+            company="Random Co",
+            url="http://test.com",
+            source="test",
+            description="Lead the ML platform team. AI and machine learning focus.",
+        )
+
+        result = matcher.match(job)
+        assert result.matched is False
+
+    def test_director_role_rejected(self, test_profile):
+        """A Director role (non-PM) with AI keywords should NOT match."""
+        matcher = KeywordMatcher(test_profile)
+
+        job = JobData(
+            title="Director of Engineering",
+            company="Random Co",
+            url="http://test.com",
+            source="test",
+            description="Lead AI engineering org. ML and search teams.",
+        )
+
+        result = matcher.match(job)
+        assert result.matched is False
+
+    def test_product_manager_with_ai_keywords_still_matches(self, test_profile):
+        """A Product Manager with AI keywords should STILL match."""
+        matcher = KeywordMatcher(test_profile)
+
+        job = JobData(
+            title="Product Manager",
+            company="Random Co",
+            url="http://test.com",
+            source="test",
+            description="Work on AI features. ML and search experience needed.",
+        )
+
+        result = matcher.match(job)
+        assert result.matched is True, "Product Manager with AI keywords should match"
+
+    def test_staff_product_manager_still_matches(self, test_profile):
+        """Staff Product Manager should match — has core role term."""
+        matcher = KeywordMatcher(test_profile)
+
+        job = JobData(
+            title="Staff Product Manager",
+            company="Unknown Co",
+            url="http://test.com",
+            source="test",
+            description="AI and ML platform product work. Search and personalization.",
+        )
+
+        result = matcher.match(job)
+        assert result.matched is True
+
+    def test_target_company_exemption(self, test_profile):
+        """Jobs at target companies should match even with irrelevant titles."""
+        matcher = KeywordMatcher(test_profile)
+
+        job = JobData(
+            title="Senior Software Engineer",
+            company="OpenAI",  # Tier 1 target company
+            url="http://test.com",
+            source="test",
+            description="Build AI systems.",
+        )
+
+        result = matcher.match(job)
+        assert result.matched is True, "Target company jobs should always match"
+
+    def test_ai_product_manager_exact_title_still_matches(self, test_profile):
+        """Exact title match should still work perfectly."""
+        matcher = KeywordMatcher(test_profile)
+
+        job = JobData(
+            title="AI Product Manager",
+            company="Random Co",
+            url="http://test.com",
+            source="test",
+            description="Basic product management role.",
+        )
+
+        result = matcher.match(job)
+        assert result.matched is True
+
+    def test_data_scientist_rejected_no_core_role(self, test_profile):
+        """A Data Scientist is not a Product Manager — should not match."""
+        matcher = KeywordMatcher(test_profile)
+
+        job = JobData(
+            title="Senior Data Scientist",
+            company="Random Co",
+            url="http://test.com",
+            source="test",
+            description="ML and AI research. Search ranking and recommendations.",
+        )
+
+        result = matcher.match(job)
+        assert result.matched is False
+
+    def test_product_management_variant_matches(self, test_profile):
+        """'Product Management' in title should be treated like 'Product Manager'."""
+        matcher = KeywordMatcher(test_profile)
+
+        # Core role terms should include both "manager" and "management"
+        assert "product manager" in matcher.core_role_terms
+        assert "product management" in matcher.core_role_terms
+
+        job = JobData(
+            title="Director of Product Management",
+            company="Random Co",
+            url="http://test.com",
+            source="test",
+            description="Lead AI and ML product initiatives. Search platform strategy.",
+        )
+
+        result = matcher.match(job)
+        assert result.matched is True, (
+            "Director of Product Management with AI keywords should match"
+        )

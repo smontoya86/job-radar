@@ -18,9 +18,11 @@ if str(_project_root) not in sys.path:
 
 # Now we can import from project modules
 from config.settings import settings
+from src.logging_config import setup_logging
 from src.persistence.database import get_session, init_db
 
-# Initialize database once on module import
+# Initialize logging and database once on module import
+setup_logging(log_file="logs/jobradar.log")
 init_db()
 
 

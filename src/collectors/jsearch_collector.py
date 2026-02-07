@@ -1,11 +1,14 @@
 """JSearch (RapidAPI) job collector."""
 import asyncio
+import logging
 from typing import Optional
 
 import aiohttp
 
 from .base import BaseCollector, JobData
-from .utils import parse_date_iso, parse_salary
+from .utils import http_get_json, parse_date_iso, parse_salary
+
+logger = logging.getLogger(__name__)
 
 
 class JSearchCollector(BaseCollector):
@@ -32,7 +35,7 @@ class JSearchCollector(BaseCollector):
     async def collect(self, search_queries: list[str]) -> list[JobData]:
         """Collect jobs from JSearch API."""
         if not self.api_key:
-            print("JSearch API key not configured, skipping")
+            logger.info("JSearch API key not configured, skipping")
             return []
 
         all_jobs: list[JobData] = []
@@ -43,7 +46,7 @@ class JSearchCollector(BaseCollector):
                     jobs = await self._search(session, query)
                     all_jobs.extend(jobs)
                 except Exception as e:
-                    print(f"JSearch error for query '{query}': {e}")
+                    logger.error("JSearch error for query '%s': %s", query, e)
 
         return all_jobs
 
@@ -60,22 +63,20 @@ class JSearchCollector(BaseCollector):
             "num_pages": "1",
         }
 
-        async with session.get(
-            self.BASE_URL, headers=headers, params=params
-        ) as response:
-            if response.status != 200:
-                print(f"JSearch API returned status {response.status}")
-                return []
+        data = await http_get_json(
+            session, self.BASE_URL, headers=headers, params=params
+        )
+        if data is None:
+            return []
 
-            data = await response.json()
-            jobs = []
+        jobs = []
 
-            for item in data.get("data", []):
-                job = self._parse_job(item)
-                if job:
-                    jobs.append(job)
+        for item in data.get("data", []):
+            job = self._parse_job(item)
+            if job:
+                jobs.append(job)
 
-            return jobs
+        return jobs
 
     def _parse_job(self, data: dict) -> Optional[JobData]:
         """Parse JSearch job data to JobData."""
@@ -110,5 +111,5 @@ class JSearchCollector(BaseCollector):
                 posted_date=posted_date,
             )
         except Exception as e:
-            print(f"Error parsing JSearch job: {e}")
+            logger.error("Error parsing JSearch job: %s", e)
             return None

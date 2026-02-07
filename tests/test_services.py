@@ -471,6 +471,210 @@ class TestCreateFromRejectionEmail:
         assert app is None
 
 
+class TestFuzzyJobLinking:
+    """Tests for fuzzy company name matching when linking applications to jobs."""
+
+    def test_fuzzy_link_merged_word(self, test_db):
+        """'Fetchrewards' (from email domain) matches 'Fetch Rewards' job."""
+        job = Job(
+            id="job-fuzzy-1",
+            title="Product Manager",
+            company="Fetch Rewards",
+            url="https://fetchrewards.com/jobs/1",
+            source="greenhouse",
+            description="PM role at Fetch Rewards.",
+        )
+        test_db.add(job)
+        test_db.commit()
+
+        app = Application(
+            id="app-fuzzy-1",
+            company="Fetchrewards",
+            position="Product Manager",
+            applied_date=datetime(2026, 1, 20),
+            status="applied",
+        )
+        test_db.add(app)
+        test_db.commit()
+
+        service = ApplicationService(test_db)
+        service._try_link_to_job(app)
+
+        assert app.job_id == "job-fuzzy-1"
+        assert app.job_description == "PM role at Fetch Rewards."
+
+    def test_fuzzy_link_suffix_stripped(self, test_db):
+        """'TestCorp Inc' matches 'TestCorp' via suffix stripping."""
+        job = Job(
+            id="job-suffix-1",
+            title="PM",
+            company="TestCorp",
+            url="https://testcorp.com/jobs/1",
+            source="lever",
+            description="PM at TestCorp.",
+        )
+        test_db.add(job)
+        test_db.commit()
+
+        app = Application(
+            id="app-suffix-1",
+            company="TestCorp Inc",
+            position="PM",
+            applied_date=datetime(2026, 1, 20),
+            status="applied",
+        )
+        test_db.add(app)
+        test_db.commit()
+
+        service = ApplicationService(test_db)
+        service._try_link_to_job(app)
+
+        assert app.job_id == "job-suffix-1"
+
+    def test_fuzzy_link_does_not_false_positive(self, test_db):
+        """'Block' should NOT match 'Fireblocks' — substring is not sufficient."""
+        job = Job(
+            id="job-no-false-1",
+            title="PM",
+            company="Fireblocks",
+            url="https://fireblocks.com/jobs/1",
+            source="lever",
+            description="Fireblocks PM role.",
+        )
+        test_db.add(job)
+        test_db.commit()
+
+        app = Application(
+            id="app-no-false-1",
+            company="Block",
+            position="PM",
+            applied_date=datetime(2026, 1, 20),
+            status="applied",
+        )
+        test_db.add(app)
+        test_db.commit()
+
+        service = ApplicationService(test_db)
+        service._try_link_to_job(app)
+
+        assert app.job_id is None
+
+    def test_fuzzy_link_with_punctuation(self, test_db):
+        """'Maven AGI' matches 'Maven A.G.I.' after punctuation stripping."""
+        job = Job(
+            id="job-punct-1",
+            title="PM",
+            company="Maven A.G.I.",
+            url="https://maven.com/jobs/1",
+            source="lever",
+            description="PM at Maven AGI.",
+        )
+        test_db.add(job)
+        test_db.commit()
+
+        app = Application(
+            id="app-punct-1",
+            company="Maven AGI",
+            position="PM",
+            applied_date=datetime(2026, 1, 20),
+            status="applied",
+        )
+        test_db.add(app)
+        test_db.commit()
+
+        service = ApplicationService(test_db)
+        service._try_link_to_job(app)
+
+        assert app.job_id == "job-punct-1"
+
+
+class TestRelinkUnlinkedApplications:
+    """Tests for periodic re-linking of unlinked applications."""
+
+    def test_relink_finds_new_match(self, test_db):
+        """App created BEFORE job should get linked by re-link."""
+        # Create app first (no job exists yet)
+        app = Application(
+            id="app-relink-1",
+            company="NewCorp",
+            position="PM",
+            applied_date=datetime(2026, 1, 15),
+            status="applied",
+        )
+        test_db.add(app)
+        test_db.commit()
+
+        assert app.job_id is None
+
+        # Job arrives later
+        job = Job(
+            id="job-relink-1",
+            title="PM",
+            company="NewCorp",
+            url="https://newcorp.com/jobs/1",
+            source="greenhouse",
+            description="PM at NewCorp.",
+        )
+        test_db.add(job)
+        test_db.commit()
+
+        service = ApplicationService(test_db)
+        linked_count = service.relink_unlinked_applications()
+
+        assert linked_count == 1
+        assert app.job_id == "job-relink-1"
+        assert app.job_description == "PM at NewCorp."
+
+    def test_relink_skips_already_linked(self, test_db):
+        """Re-link doesn't touch applications that already have job_id."""
+        job = Job(
+            id="job-skip-1",
+            title="PM",
+            company="LinkedCorp",
+            url="https://linkedcorp.com/jobs/1",
+            source="lever",
+            description="Already linked.",
+        )
+        test_db.add(job)
+        test_db.commit()
+
+        app = Application(
+            id="app-skip-1",
+            company="LinkedCorp",
+            position="PM",
+            applied_date=datetime(2026, 1, 20),
+            status="applied",
+            job_id="job-skip-1",
+            job_description="Original description.",
+        )
+        test_db.add(app)
+        test_db.commit()
+
+        service = ApplicationService(test_db)
+        linked_count = service.relink_unlinked_applications()
+
+        assert linked_count == 0
+        assert app.job_description == "Original description."
+
+    def test_relink_returns_zero_when_nothing_to_link(self, test_db):
+        """Re-link returns 0 when no unlinked apps have matching jobs."""
+        app = Application(
+            id="app-nomatch-1",
+            company="ObscureCorp",
+            position="PM",
+            applied_date=datetime(2026, 1, 20),
+            status="applied",
+        )
+        test_db.add(app)
+        test_db.commit()
+
+        service = ApplicationService(test_db)
+        linked_count = service.relink_unlinked_applications()
+
+        assert linked_count == 0
+        assert app.job_id is None
+
+
 class TestResumeService:
     """Tests for ResumeService."""
 

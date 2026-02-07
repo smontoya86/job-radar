@@ -5,8 +5,28 @@
 #   Stop:   ./docker-stop.sh   OR  docker compose down
 #   Logs:   docker compose logs -f
 #   Shell:  docker compose exec dashboard bash
+#
+# Data is persisted in a Docker volume (pgdata). To reset:
+#   docker compose down -v
 
 services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: job-radar-db
+    environment:
+      POSTGRES_USER: jobradar
+      POSTGRES_PASSWORD: jobradar
+      POSTGRES_DB: jobradar
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jobradar"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
   # Streamlit Dashboard
   dashboard:
     build: .
@@ -14,16 +34,18 @@ services:
     command: streamlit run dashboard/app.py --server.port=8501 --server.address=0.0.0.0 --browser.gatherUsageStats=false
     ports:
       - "${DASHBOARD_PORT:-8501}:8501"
+    environment:
+      DATABASE_URL: postgresql://jobradar:jobradar@postgres:5432/jobradar
     volumes:
-      # Persist database
-      - ./data:/app/data
       # Mount config (writable so Settings page can update profile)
       - ./config:/app/config
       # Mount .env so config_checker can find it
       - ./.env:/app/.env:ro
       # Mount credentials for Gmail (optional - use empty files if not set up)
       - ./credentials.json:/app/credentials.json:ro
-      - ./token.json:/app/token.json:ro
+      - ./token.json:/app/token.json
+      # Logs
+      - ./logs:/app/logs
     env_file:
       - .env
     restart: unless-stopped
@@ -33,15 +55,18 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   # Background Job Scanner
   scanner:
     build: .
     container_name: job-radar-scanner
     command: python -u src/main.py
+    environment:
+      DATABASE_URL: postgresql://jobradar:jobradar@postgres:5432/jobradar
     volumes:
-      # Share same database
-      - ./data:/app/data
       # Mount source code for live updates
       - ./src:/app/src:ro
       # Mount config
@@ -50,7 +75,7 @@ services:
       - ./.env:/app/.env:ro
       # Mount credentials for Gmail (optional)
       - ./credentials.json:/app/credentials.json:ro
-      - ./token.json:/app/token.json:ro
+      - ./token.json:/app/token.json
       # Logs
       - ./logs:/app/logs
     env_file:
@@ -59,3 +84,6 @@ services:
     depends_on:
       dashboard:
         condition: service_healthy
+
+volumes:
+  pgdata:

@@ -1,4 +1,5 @@
 """SQLAlchemy models for Job Radar."""
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -8,6 +9,36 @@ def utcnow() -> datetime:
     """Return current UTC time as timezone-aware datetime."""
     return datetime.now(timezone.utc)
 
+
+def normalize_company_key(name: str) -> str:
+    """Normalize company name to a canonical key for fast matching.
+
+    Lowercases, strips whitespace, and removes common suffixes like
+    Inc, LLC, Corp, Ltd, Co so that "Stripe, Inc." and "Stripe" match.
+    """
+    if not name:
+        return ""
+    key = name.lower().strip()
+    # Remove trailing punctuation and common suffixes
+    key = re.sub(r"[.,;:!]+$", "", key)
+    for suffix in (" inc", " llc", " corp", " ltd", " co", " company"):
+        if key.endswith(suffix):
+            key = key[: -len(suffix)].rstrip()
+    # Strip punctuation again (e.g., "Stripe, Inc." -> "stripe," after suffix removal)
+    key = re.sub(r"[.,;:!]+$", "", key)
+    return key
+
+
+def normalize_company_key_fuzzy(name: str) -> str:
+    """Create a fuzzy matching key by stripping all non-alphanumeric chars.
+
+    Handles cases like 'Fetchrewards' vs 'Fetch Rewards' and
+    'Maven AGI' vs 'Maven A.G.I.' by removing spaces and punctuation.
+    """
+    key = normalize_company_key(name)
+    return re.sub(r"[^a-z0-9]", "", key)
+
+
 from sqlalchemy import (
     JSON,
     Boolean,
@@ -15,6 +46,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -125,6 +157,7 @@ class Job(Base):
     user_id = Column(String, ForeignKey("users.id"), nullable=True)  # Multi-tenant
     title = Column(String, nullable=False)
     company = Column(String, nullable=False)
+    company_key = Column(String, index=True)  # Normalized for fast matching
     location = Column(String)
     description = Column(Text)
     salary_min = Column(Integer)
@@ -150,6 +183,11 @@ class Job(Base):
     # Relationships
     user = relationship("User", back_populates="jobs")
     applications = relationship("Application", back_populates="job")
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        if self.company and not self.company_key:
+            self.company_key = normalize_company_key(self.company)
 
     def __repr__(self) -> str:
         return f"<Job {self.company} - {self.title}>"
@@ -187,6 +225,7 @@ class Application(Base):
     user_id = Column(String, ForeignKey("users.id"), nullable=True)  # Multi-tenant
     job_id = Column(String, ForeignKey("jobs.id"), nullable=True)
     company = Column(String, nullable=False)
+    company_key = Column(String, index=True)  # Normalized for fast matching
     position = Column(String, nullable=False)
 
     # Application details
@@ -226,6 +265,11 @@ class Application(Base):
     resume = relationship("Resume", back_populates="applications")
     interviews = relationship("Interview", back_populates="application")
     email_imports = relationship("EmailImport", back_populates="application")
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        if self.company and not self.company_key:
+            self.company_key = normalize_company_key(self.company)
 
     def __repr__(self) -> str:
         return f"<Application {self.company} - {self.position} ({self.status})>"

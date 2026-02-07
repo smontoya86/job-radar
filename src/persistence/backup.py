@@ -1,4 +1,5 @@
 """Database backup and restore utilities for data protection."""
+import logging
 import os
 import shutil
 import subprocess
@@ -7,6 +8,8 @@ from pathlib import Path
 from typing import Optional
 
 from config.settings import settings
+
+logger = logging.getLogger(__name__)
 
 
 class DatabaseBackup:
@@ -72,7 +75,7 @@ class DatabaseBackup:
         backup_path = self.backup_dir / backup_filename
 
         shutil.copy2(db_path, backup_path)
-        print(f"SQLite backup created: {backup_path}")
+        logger.info("SQLite backup created: %s", backup_path)
 
         return str(backup_path)
 
@@ -90,7 +93,7 @@ class DatabaseBackup:
                 text=True,
                 check=True,
             )
-            print(f"PostgreSQL backup created: {backup_path}")
+            logger.info("PostgreSQL backup created: %s", backup_path)
             return str(backup_path)
 
         except subprocess.CalledProcessError as e:
@@ -130,10 +133,10 @@ class DatabaseBackup:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             pre_restore_backup = self.backup_dir / f"pre_restore_{timestamp}.db"
             shutil.copy2(db_path, pre_restore_backup)
-            print(f"Pre-restore backup created: {pre_restore_backup}")
+            logger.info("Pre-restore backup created: %s", pre_restore_backup)
 
         shutil.copy2(backup_path, db_path)
-        print(f"SQLite database restored from: {backup_path}")
+        logger.info("SQLite database restored from: %s", backup_path)
 
     def _restore_postgresql(self, backup_path: str) -> None:
         """Restore PostgreSQL database using pg_restore."""
@@ -147,7 +150,7 @@ class DatabaseBackup:
                 text=True,
                 check=True,
             )
-            print(f"PostgreSQL database restored from: {backup_path}")
+            logger.info("PostgreSQL database restored from: %s", backup_path)
 
         except subprocess.CalledProcessError as e:
             raise RuntimeError(f"PostgreSQL restore failed: {e.stderr}")
@@ -196,9 +199,9 @@ class DatabaseBackup:
             try:
                 Path(backup["path"]).unlink()
                 deleted_count += 1
-                print(f"Deleted old backup: {backup['filename']}")
+                logger.info("Deleted old backup: %s", backup['filename'])
             except OSError as e:
-                print(f"Failed to delete {backup['filename']}: {e}")
+                logger.error("Failed to delete %s: %s", backup['filename'], e)
 
         return deleted_count
 

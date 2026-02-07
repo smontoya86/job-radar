@@ -8,6 +8,7 @@ Usage:
     python scripts/backfill_job_descriptions.py --dry-run # Preview only
 """
 import argparse
+import logging
 import sys
 from pathlib import Path
 
@@ -17,12 +18,17 @@ if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
 from scripts.bootstrap import get_session, init_db
+from src.logging_config import setup_logging
 from src.tracking.application_service import ApplicationService
 from src.persistence.models import Application
 from sqlalchemy import or_, select
 
+logger = logging.getLogger(__name__)
+
 
 def main():
+    setup_logging()
+
     parser = argparse.ArgumentParser(description="Backfill job descriptions for applications.")
     parser.add_argument(
         "--dry-run",
@@ -43,10 +49,10 @@ def main():
         ).order_by(Application.company)
         apps = session.execute(stmt).scalars().all()
 
-        print(f"Found {len(apps)} applications without job descriptions.\n")
+        logger.info("Found %s applications without job descriptions.", len(apps))
 
         if not apps:
-            print("Nothing to backfill.")
+            logger.info("Nothing to backfill.")
             return
 
         service = ApplicationService(session)
@@ -59,21 +65,21 @@ def main():
             if app.job_description:
                 linked += 1
                 desc_preview = app.job_description[:80].replace("\n", " ")
-                print(f"  [LINK] {app.company} - {app.position}")
-                print(f"         → Job ID: {app.job_id}")
-                print(f"         → Description: {desc_preview}...")
+                logger.info("  [LINK] %s - %s", app.company, app.position)
+                logger.info("         -> Job ID: %s", app.job_id)
+                logger.info("         -> Description: %s...", desc_preview)
             else:
                 skipped += 1
-                print(f"  [SKIP] {app.company} - {app.position} (no matching job found)")
+                logger.info("  [SKIP] %s - %s (no matching job found)", app.company, app.position)
 
-        print(f"\nSummary: {linked} linked, {skipped} skipped")
+        logger.info("Summary: %s linked, %s skipped", linked, skipped)
 
         if args.dry_run:
-            print("\n--dry-run mode: rolling back changes.")
+            logger.info("--dry-run mode: rolling back changes.")
             session.rollback()
         else:
             session.commit()
-            print(f"\nCommitted {linked} updates to database.")
+            logger.info("Committed %s updates to database.", linked)
 
 
 if __name__ == "__main__":

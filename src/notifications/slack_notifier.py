@@ -1,11 +1,14 @@
 """Slack notifications for job alerts."""
 import asyncio
+import logging
 from datetime import datetime
 from typing import Optional
 
 import aiohttp
 
 from src.matching.scorer import ScoredJob
+
+logger = logging.getLogger(__name__)
 
 
 class SlackNotifier:
@@ -40,7 +43,7 @@ class SlackNotifier:
             True if notification sent successfully
         """
         if not self.webhook_url:
-            print("Slack webhook not configured")
+            logger.info("Slack webhook not configured")
             return False
 
         if job.score < self.min_score:
@@ -61,7 +64,7 @@ class SlackNotifier:
                     return response.status == 200
 
         except Exception as e:
-            print(f"Slack notification error: {e}")
+            logger.error("Slack notification error: %s", e)
             return False
 
     async def notify_batch(self, jobs: list[ScoredJob]) -> int:
@@ -178,7 +181,7 @@ class SlackNotifier:
                 ) as response:
                     return response.status == 200
         except Exception as e:
-            print(f"Slack summary error: {e}")
+            logger.error("Slack summary error: %s", e)
             return False
 
     def _build_payload(self, job: ScoredJob) -> dict:

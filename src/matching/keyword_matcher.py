@@ -180,11 +180,14 @@ class KeywordMatcher:
             remote_match = False
 
         # === MATCH DETERMINATION ===
-        # Match if: keywords in description OR keywords in title OR target company
+        # Title-gating: require the title to be relevant (contains a core role
+        # term like "product manager") unless the job is at a target company.
+        # This prevents "Senior Software Engineer" roles with "AI" in the
+        # description from appearing in results.
+        has_relevant_title = title_exact_match or title_partial_score > 0.1
+
         matched = (
-            len(desc_primary_matches) > 0 or
-            title_has_primary or
-            title_exact_match or
+            (has_relevant_title and (len(desc_primary_matches) > 0 or title_has_primary)) or
             company_tier is not None
         )
 
@@ -246,6 +249,11 @@ class KeywordMatcher:
             core = t_lower.split(",")[0].strip()
             if core:
                 core_terms.add(core)
+                # Add "management" variant for "manager" terms so
+                # "Director of Product Management" matches alongside
+                # "Director of Product Manager" style titles.
+                if core.endswith(" manager"):
+                    core_terms.add(core[:-len("manager")] + "management")
         return core_terms
 
     def _calculate_title_relevance(self, title: str) -> float:

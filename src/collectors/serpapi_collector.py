@@ -1,11 +1,16 @@
 """SerpApi Google Jobs collector."""
 import asyncio
+import logging
+import random
 from datetime import datetime
 from typing import Optional
 
 import aiohttp
 
 from .base import BaseCollector, JobData
+from .utils import http_get_json
+
+logger = logging.getLogger(__name__)
 
 
 class SerpApiCollector(BaseCollector):
@@ -32,18 +37,22 @@ class SerpApiCollector(BaseCollector):
     async def collect(self, search_queries: list[str]) -> list[JobData]:
         """Collect jobs from SerpApi Google Jobs engine."""
         if not self.api_key:
-            print("SerpApi API key not configured, skipping")
+            logger.info("SerpApi API key not configured, skipping")
             return []
 
         all_jobs: list[JobData] = []
 
         async with aiohttp.ClientSession() as session:
-            for query in search_queries:
+            for i, query in enumerate(search_queries):
                 try:
                     jobs = await self._search(session, query)
                     all_jobs.extend(jobs)
                 except Exception as e:
-                    print(f"SerpApi error for query '{query}': {e}")
+                    logger.error("SerpApi error for query '%s': %s", query, e)
+
+                # Rate limit: 1-2s between queries (free tier: 100 req/day)
+                if i < len(search_queries) - 1:
+                    await asyncio.sleep(random.uniform(1.0, 2.0))
 
         return all_jobs
 
@@ -56,20 +65,18 @@ class SerpApiCollector(BaseCollector):
             "num": self.results_wanted,
         }
 
-        async with session.get(self.BASE_URL, params=params) as response:
-            if response.status != 200:
-                print(f"SerpApi returned status {response.status}")
-                return []
+        data = await http_get_json(session, self.BASE_URL, params=params)
+        if data is None:
+            return []
 
-            data = await response.json()
-            jobs = []
+        jobs = []
 
-            for result in data.get("jobs_results", []):
-                job = self._parse_job(result)
-                if job:
-                    jobs.append(job)
+        for result in data.get("jobs_results", []):
+            job = self._parse_job(result)
+            if job:
+                jobs.append(job)
 
-            return jobs
+        return jobs
 
     def _parse_job(self, data: dict) -> Optional[JobData]:
         """Parse SerpApi Google Jobs result to JobData."""
@@ -129,7 +136,7 @@ class SerpApiCollector(BaseCollector):
                 },
             )
         except Exception as e:
-            print(f"Error parsing SerpApi job: {e}")
+            logger.error("Error parsing SerpApi job: %s", e)
             return None
 
     def _parse_salary(self, salary_str: str) -> tuple[Optional[int], Optional[int]]:

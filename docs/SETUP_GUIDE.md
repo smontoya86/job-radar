@@ -210,7 +210,8 @@ python src/main.py
 | Slack webhook | `.env` → `SLACK_WEBHOOK_URL` |
 | Gmail credentials | `credentials.json` (project root) |
 | Gmail token | `token.json` (auto-created) |
-| Database | `data/job_radar.db` |
+| Database (local) | `data/job_radar.db` (SQLite) |
+| Database (Docker) | PostgreSQL in `postgres` container |
 | Logs | `logs/jobradar.log` |
 
 ---
@@ -236,13 +237,16 @@ cp config/profile.yaml.example config/profile.yaml
 |---------|------|---------|
 | `dashboard` | 8501 | Streamlit web UI |
 | `scanner` | - | Background job radar |
+| `postgres` | 5432 | PostgreSQL database |
 
 ### Data Persistence
 
-Data is stored on the host via Docker volumes:
-- `./data/job_radar.db` - SQLite database
+Docker uses PostgreSQL for the database (not SQLite):
+- `pgdata` named volume - PostgreSQL data (persists across restarts)
 - `./config/profile.yaml` - Job search criteria (read-only mount)
 - `./.env` - Environment secrets (read-only mount)
+
+> **Note:** Local development still uses SQLite at `data/job_radar.db`. Docker automatically overrides the database URL to use the PostgreSQL container.
 
 ### Docker Commands
 
@@ -250,6 +254,7 @@ Data is stored on the host via Docker volumes:
 ./docker-start.sh            # Build & start
 ./docker-stop.sh             # Stop
 docker compose logs -f       # View all logs
+docker compose logs -f postgres  # View database logs
 docker compose restart scanner  # Restart scanner only
 ```
 

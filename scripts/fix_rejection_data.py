@@ -9,6 +9,7 @@ Usage:
     python scripts/fix_rejection_data.py --dry-run # Preview only
 """
 import argparse
+import logging
 import re
 import sys
 from pathlib import Path
@@ -19,16 +20,19 @@ if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
 from scripts.bootstrap import get_session, init_db
+from src.logging_config import setup_logging
 from src.tracking.application_service import ApplicationService
 from src.persistence.models import Application, EmailImport
 from src.gmail.parser import EmailParser, EmailType, ParsedEmail
 from src.gmail.client import EmailMessage
 from sqlalchemy import or_, select
 
+logger = logging.getLogger(__name__)
+
 
 def fix_rejected_at(session, dry_run: bool) -> int:
     """Fix bad rejected_at values."""
-    print("=== Fix 1: Repair rejected_at values ===")
+    logger.info("=== Fix 1: Repair rejected_at values ===")
     stmt = select(Application).where(Application.status == "rejected")
     apps = session.execute(stmt).scalars().all()
 
@@ -38,15 +42,15 @@ def fix_rejected_at(session, dry_run: bool) -> int:
             old_val = repr(app.rejected_at)
             app.rejected_at = "applied"
             fixed += 1
-            print(f"  [FIX] {app.company}: rejected_at {old_val} -> 'applied'")
+            logger.info("  [FIX] %s: rejected_at %s -> 'applied'", app.company, old_val)
 
-    print(f"  Fixed {fixed} of {len(apps)} rejected applications\n")
+    logger.info("  Fixed %s of %s rejected applications", fixed, len(apps))
     return fixed
 
 
 def backfill_descriptions(session, dry_run: bool) -> int:
     """Link applications to Jobs and copy descriptions."""
-    print("=== Fix 2: Backfill job descriptions ===")
+    logger.info("=== Fix 2: Backfill job descriptions ===")
     stmt = select(Application).where(
         or_(
             Application.job_description.is_(None),
@@ -55,7 +59,7 @@ def backfill_descriptions(session, dry_run: bool) -> int:
     ).order_by(Application.company)
     apps = session.execute(stmt).scalars().all()
 
-    print(f"  Found {len(apps)} applications without job descriptions")
+    logger.info("  Found %s applications without job descriptions", len(apps))
 
     service = ApplicationService(session)
     linked = 0
@@ -65,23 +69,23 @@ def backfill_descriptions(session, dry_run: bool) -> int:
         if app.job_description:
             linked += 1
             desc_preview = app.job_description[:60].replace("\n", " ")
-            print(f"  [LINK] {app.company} - {app.position} -> {desc_preview}...")
+            logger.info("  [LINK] %s - %s -> %s...", app.company, app.position, desc_preview)
         else:
-            print(f"  [SKIP] {app.company} - {app.position} (no matching job)")
+            logger.info("  [SKIP] %s - %s (no matching job)", app.company, app.position)
 
-    print(f"  Linked {linked} of {len(apps)} applications\n")
+    logger.info("  Linked %s of %s applications", linked, len(apps))
     return linked
 
 
 def create_apps_from_unlinked_emails(session, dry_run: bool) -> int:
     """Create applications for unlinked rejection emails."""
-    print("=== Fix 3: Process unlinked rejection emails ===")
+    logger.info("=== Fix 3: Process unlinked rejection emails ===")
     stmt = select(EmailImport).where(
         EmailImport.email_type == "rejection",
         EmailImport.application_id.is_(None),
     )
     unlinked = session.execute(stmt).scalars().all()
-    print(f"  Found {len(unlinked)} unlinked rejection emails")
+    logger.info("  Found %s unlinked rejection emails", len(unlinked))
 
     parser = EmailParser()
     service = ApplicationService(session)
@@ -97,7 +101,7 @@ def create_apps_from_unlinked_emails(session, dry_run: bool) -> int:
             for pat in parser.EXCLUSION_PATTERNS
         )
         if is_excluded:
-            print(f"  [EXCLUDE] '{subject}' - matches exclusion pattern")
+            logger.info("  [EXCLUDE] '%s' - matches exclusion pattern", subject)
             email_import.email_type = "unknown"
             skipped += 1
             continue
@@ -120,7 +124,7 @@ def create_apps_from_unlinked_emails(session, dry_run: bool) -> int:
         company = parser._extract_company(email_msg)
 
         if not company:
-            print(f"  [SKIP] '{subject}' - no company extracted")
+            logger.info("  [SKIP] '%s' - no company extracted", subject)
             skipped += 1
             continue
 
@@ -131,7 +135,7 @@ def create_apps_from_unlinked_emails(session, dry_run: bool) -> int:
             email_import.processed = True
             if existing.status != "rejected":
                 service.update_status(existing.id, "rejected", notes="Rejection email (reprocessed)")
-            print(f"  [LINK] '{subject}' -> existing app for {existing.company}")
+            logger.info("  [LINK] '%s' -> existing app for %s", subject, existing.company)
             skipped += 1
             continue
 
@@ -146,16 +150,18 @@ def create_apps_from_unlinked_emails(session, dry_run: bool) -> int:
             email_import.application_id = app.id
             email_import.processed = True
             created += 1
-            print(f"  [CREATE] {app.company} - {app.position} (status: {app.status})")
+            logger.info("  [CREATE] %s - %s (status: %s)", app.company, app.position, app.status)
         else:
             skipped += 1
-            print(f"  [SKIP] '{subject}' - create_from_email returned None")
+            logger.info("  [SKIP] '%s' - create_from_email returned None", subject)
 
-    print(f"  Created {created}, skipped {skipped}\n")
+    logger.info("  Created %s, skipped %s", created, skipped)
     return created
 
 
 def main():
+    setup_logging()
+
     arg_parser = argparse.ArgumentParser(description="Fix rejection analysis data issues.")
     arg_parser.add_argument(
         "--dry-run",
@@ -174,13 +180,13 @@ def main():
         total_fixes += create_apps_from_unlinked_emails(session, args.dry_run)
 
         # Summary
-        print("=" * 50)
+        logger.info("=" * 50)
         if args.dry_run:
-            print(f"DRY RUN: Would apply {total_fixes} fixes. Rolling back.")
+            logger.info("DRY RUN: Would apply %s fixes. Rolling back.", total_fixes)
             session.rollback()
         else:
             session.commit()
-            print(f"Applied {total_fixes} fixes to database.")
+            logger.info("Applied %s fixes to database.", total_fixes)
 
         # Final stats
         from sqlalchemy import func
@@ -192,10 +198,10 @@ def main():
             Application.job_description.isnot(None),
             Application.job_description != "",
         ).scalar()
-        print(f"\nRejected applications: {rejected_count}")
-        print(f"With descriptions: {with_desc}")
+        logger.info("Rejected applications: %s", rejected_count)
+        logger.info("With descriptions: %s", with_desc)
         coverage = with_desc / rejected_count * 100 if rejected_count else 0
-        print(f"Analysis coverage: {coverage:.0f}%")
+        logger.info("Analysis coverage: %s%%", f"{coverage:.0f}")
 
 
 if __name__ == "__main__":

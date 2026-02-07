@@ -11,7 +11,7 @@ import streamlit as st
 from sqlalchemy import select
 
 from dashboard.common import get_session
-from src.persistence.models import Job, Application
+from src.persistence.models import Job, Application, normalize_company_key
 from src.tracking.application_service import ApplicationService
 
 st.set_page_config(page_title="Jobs | Job Radar", page_icon="🎯", layout="wide")
@@ -84,46 +84,27 @@ with get_session() as session:
     result = session.execute(stmt)
     jobs = list(result.scalars().all())
 
-    # Filter out jobs already applied for
+    # Filter out jobs already applied for (by specific position, not entire company)
     if hide_applied:
-        # Get all applications
         applications = session.query(Application).all()
+        # Collect job_ids for direct-linked applications
+        applied_job_ids = {app.job_id for app in applications if app.job_id}
+        # Collect (company_key, title_lower) pairs for fuzzy matching
+        applied_positions = {
+            (app.company_key, app.position.lower())
+            for app in applications
+            if app.company_key and app.position
+        }
 
-        # Build set of (company_lower, position_keywords) for matching
-        applied_jobs = set()
-        for app in applications:
-            company_lower = app.company.lower().strip()
-            # Also store key words from position to match similar titles
-            position_words = set(app.position.lower().split())
-            applied_jobs.add((company_lower, frozenset(position_words)))
-
-        def is_already_applied(job):
-            """Check if this job matches an existing application."""
-            job_company = job.company.lower().strip()
-            job_title_words = set(job.title.lower().split())
-
-            for app_company, app_position_words in applied_jobs:
-                # Check if company matches (fuzzy - one contains the other)
-                company_match = (
-                    app_company in job_company or
-                    job_company in app_company or
-                    app_company.replace(' ', '') == job_company.replace(' ', '')
-                )
-
-                if company_match:
-                    # Check if position has significant overlap (at least 2 key words match)
-                    # Filter out common words
-                    common_words = {'the', 'a', 'an', 'and', 'or', 'of', 'for', 'at', 'in', '-', '–', '|'}
-                    job_keywords = job_title_words - common_words
-                    app_keywords = app_position_words - common_words
-
-                    overlap = len(job_keywords & app_keywords)
-                    if overlap >= 2 or (overlap >= 1 and len(app_keywords) <= 3):
-                        return True
-            return False
+        def _is_applied(job):
+            if job.id in applied_job_ids:
+                return True
+            key = normalize_company_key(job.company)
+            title = (job.title or "").lower()
+            return (key, title) in applied_positions
 
         original_count = len(jobs)
-        jobs = [j for j in jobs if not is_already_applied(j)]
+        jobs = [j for j in jobs if not _is_applied(j)]
         filtered_count = original_count - len(jobs)
         if filtered_count > 0:
             st.sidebar.info(f"Hiding {filtered_count} jobs you've already applied for")

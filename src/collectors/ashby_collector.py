@@ -1,5 +1,6 @@
 """Ashby job board collector."""
 import asyncio
+import logging
 import random
 from datetime import datetime
 from typing import Optional
@@ -7,6 +8,9 @@ from typing import Optional
 import aiohttp
 
 from .base import BaseCollector, JobData
+from .utils import http_get_json
+
+logger = logging.getLogger(__name__)
 
 
 class AshbyCollector(BaseCollector):
@@ -96,33 +100,30 @@ class AshbyCollector(BaseCollector):
         url = f"https://api.ashbyhq.com/posting-api/job-board/{company}"
 
         try:
-            async with session.get(
+            data = await http_get_json(
+                session,
                 url,
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
-            ) as response:
-                if response.status != 200:
-                    return []
+            )
+            if data is None:
+                return []
 
-                data = await response.json()
-                jobs = []
+            jobs = []
 
-                for job_data in data.get("jobs", []):
-                    job = self._parse_job(job_data, company)
-                    if job:
-                        jobs.append(job)
+            for job_data in data.get("jobs", []):
+                job = self._parse_job(job_data, company)
+                if job:
+                    jobs.append(job)
 
-                # Fetch descriptions for PM-related jobs (to avoid too many API calls)
-                pm_jobs = [j for j in jobs if self._is_pm_related(j.title)]
-                if pm_jobs:
-                    await self._fetch_descriptions(session, company, pm_jobs)
+            # Fetch descriptions for PM-related jobs (to avoid too many API calls)
+            pm_jobs = [j for j in jobs if self._is_pm_related(j.title)]
+            if pm_jobs:
+                await self._fetch_descriptions(session, company, pm_jobs)
 
-                return jobs
+            return jobs
 
-        except asyncio.TimeoutError:
-            print(f"Ashby timeout for {company}")
-            return []
         except Exception as e:
-            print(f"Ashby error for {company}: {e}")
+            logger.error("Ashby error for %s: %s", company, e)
             return []
 
     def _is_pm_related(self, title: str) -> bool:
@@ -155,25 +156,22 @@ class AshbyCollector(BaseCollector):
                 delay = random.uniform(*self.delay_range)
                 await asyncio.sleep(delay)
 
-                async with session.get(
-                    url,
-                    timeout=aiohttp.ClientTimeout(total=10),
-                ) as response:
-                    if response.status != 200:
-                        continue
+                data = await http_get_json(
+                    session, url, timeout=aiohttp.ClientTimeout(total=10)
+                )
+                if data is None:
+                    continue
 
-                    data = await response.json()
+                # Prefer plain text, fall back to HTML parsing
+                description = data.get("descriptionPlain")
+                if not description:
+                    html_content = data.get("descriptionHtml", "")
+                    if html_content:
+                        soup = BeautifulSoup(html_content, "html.parser")
+                        description = soup.get_text(separator=" ", strip=True)
 
-                    # Prefer plain text, fall back to HTML parsing
-                    description = data.get("descriptionPlain")
-                    if not description:
-                        html_content = data.get("descriptionHtml", "")
-                        if html_content:
-                            soup = BeautifulSoup(html_content, "html.parser")
-                            description = soup.get_text(separator=" ", strip=True)
-
-                    if description:
-                        job.description = description
+                if description:
+                    job.description = description
 
             except Exception:
                 # Silently continue on error - description fetching is best-effort
@@ -239,5 +237,5 @@ class AshbyCollector(BaseCollector):
                 },
             )
         except Exception as e:
-            print(f"Error parsing Ashby job: {e}")
+            logger.error("Error parsing Ashby job: %s", e)
             return None

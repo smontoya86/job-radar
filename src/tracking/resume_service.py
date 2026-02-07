@@ -5,7 +5,7 @@ from typing import Optional
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from src.persistence.models import Application, Resume
+from src.persistence.models import Application, Interview, Resume
 
 
 class ResumeService:
@@ -159,18 +159,28 @@ class ResumeService:
         result = self.session.execute(stmt)
         status_counts = dict(result.all())
 
-        # Calculate response rate (any response including rejections)
+        # Calculate response rate (any response including rejections and withdrawn)
         responses = sum(
             status_counts.get(s, 0)
-            for s in ["phone_screen", "interviewing", "offer", "accepted", "rejected"]
+            for s in ["phone_screen", "interviewing", "offer", "accepted", "rejected", "withdrawn"]
         )
         response_rate = (responses / total_applications * 100) if total_applications > 0 else 0
 
-        # Calculate interview rate (reached interview stage or beyond, not just phone screen)
-        interviews = sum(
+        # Calculate interview rate (reached phone_screen or beyond)
+        # Use both status-based and Interview-record-based counting so apps
+        # rejected after interviewing are still counted
+        status_interviews = sum(
             status_counts.get(s, 0)
-            for s in ["interviewing", "offer", "accepted"]
+            for s in ["phone_screen", "interviewing", "offer", "accepted"]
         )
+        # Also count apps with Interview records (covers rejected-after-interview)
+        record_stmt = (
+            select(func.count(func.distinct(Application.id)))
+            .join(Interview, Interview.application_id == Application.id)
+            .where(Application.resume_id == resume_id)
+        )
+        record_interviews = self.session.execute(record_stmt).scalar() or 0
+        interviews = max(status_interviews, record_interviews)
         interview_rate = (interviews / total_applications * 100) if total_applications > 0 else 0
 
         return {

@@ -13,6 +13,7 @@ Usage:
     python scripts/fix_audit_issues.py              # Apply changes
 """
 import argparse
+import logging
 import sys
 from pathlib import Path
 
@@ -24,9 +25,12 @@ if str(_project_root) not in sys.path:
 from scripts.bootstrap import get_session, init_db
 
 from sqlalchemy import select, update, delete, func, text
+from src.logging_config import setup_logging
 from src.persistence.models import (
     Application, EmailImport, Interview, Job, StatusHistory,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def fix_nan_descriptions(session, dry_run: bool) -> int:
@@ -36,7 +40,7 @@ def fix_nan_descriptions(session, dry_run: bool) -> int:
         func.lower(Job.description) == "nan"
     )
     job_count = session.execute(stmt).scalar() or 0
-    print(f"  Jobs with 'nan' description: {job_count}")
+    logger.info("  Jobs with 'nan' description: %s", job_count)
 
     if not dry_run and job_count > 0:
         session.execute(
@@ -48,7 +52,7 @@ def fix_nan_descriptions(session, dry_run: bool) -> int:
         func.lower(Application.job_description) == "nan"
     )
     app_count = session.execute(stmt).scalar() or 0
-    print(f"  Applications with 'nan' job_description: {app_count}")
+    logger.info("  Applications with 'nan' job_description: %s", app_count)
 
     if not dry_run and app_count > 0:
         session.execute(
@@ -64,7 +68,7 @@ def fix_nan_companies(session, dry_run: bool) -> int:
     """Clean 'nan' string company names in Job table."""
     stmt = select(func.count(Job.id)).where(func.lower(Job.company) == "nan")
     count = session.execute(stmt).scalar() or 0
-    print(f"  Jobs with 'nan' company: {count}")
+    logger.info("  Jobs with 'nan' company: %s", count)
 
     if not dry_run and count > 0:
         # Delete these junk records since a job without a company is useless
@@ -87,12 +91,12 @@ def merge_duplicate_applications(session, dry_run: bool) -> int:
     duplicates = list(result.all())
 
     if not duplicates:
-        print("  No duplicate applications found.")
+        logger.info("  No duplicate applications found.")
         return 0
 
     merged = 0
     for company, count in duplicates:
-        print(f"  Duplicate: {company} ({count} records)")
+        logger.info("  Duplicate: %s (%s records)", company, count)
 
         # Get all apps for this company
         stmt = (
@@ -119,7 +123,7 @@ def merge_duplicate_applications(session, dry_run: bool) -> int:
             remove = apps[1:]
 
         for dup in remove:
-            print(f"    Merging {dup.id} ({dup.status}) into {keep.id} ({keep.status})")
+            logger.info("    Merging %s (%s) into %s (%s)", dup.id, dup.status, keep.id, keep.status)
 
             if not dry_run:
                 # Re-link emails from duplicate to keeper
@@ -167,7 +171,7 @@ def fix_wrongly_linked_emails(session, dry_run: bool) -> int:
     )
     coursera_app = session.execute(stmt).scalars().first()
     if not coursera_app:
-        print("  No Coursera application found.")
+        logger.info("  No Coursera application found.")
         return 0
 
     # Find emails linked to Coursera that don't mention Coursera in subject
@@ -180,7 +184,7 @@ def fix_wrongly_linked_emails(session, dry_run: bool) -> int:
     for email in emails:
         subject = (email.subject or "").lower()
         if "coursera" not in subject:
-            print(f"    Unlinking: '{email.subject}' (from {email.from_address})")
+            logger.info("    Unlinking: '%s' (from %s)", email.subject, email.from_address)
             if not dry_run:
                 email.application_id = None
                 email.processed = False
@@ -197,7 +201,7 @@ def fix_duplicate_interviews(session, dry_run: bool) -> int:
     )
     coursera_app = session.execute(stmt).scalars().first()
     if not coursera_app:
-        print("  No Coursera application found.")
+        logger.info("  No Coursera application found.")
         return 0
 
     # Get all interviews for Coursera
@@ -209,14 +213,14 @@ def fix_duplicate_interviews(session, dry_run: bool) -> int:
     interviews = list(session.execute(stmt).scalars().all())
 
     if len(interviews) <= 2:
-        print(f"  Coursera has {len(interviews)} interviews, no duplicates to remove.")
+        logger.info("  Coursera has %s interviews, no duplicates to remove.", len(interviews))
         return 0
 
     # Keep rounds 1 and 2, remove any beyond that
     removed = 0
     for interview in interviews:
         if interview.round > 2:
-            print(f"    Removing interview round {interview.round}: {interview.notes or interview.type}")
+            logger.info("    Removing interview round %s: %s", interview.round, interview.notes or interview.type)
             if not dry_run:
                 session.delete(interview)
             removed += 1
@@ -237,34 +241,36 @@ def main():
     dry_run = args.dry_run
     mode = "DRY RUN" if dry_run else "APPLY"
 
-    print(f"Data Repair Script [{mode}]")
-    print("=" * 50)
+    setup_logging()
+
+    logger.info("Data Repair Script [%s]", mode)
+    logger.info("=" * 50)
 
     init_db()
 
     with get_session() as session:
         total_fixes = 0
 
-        print("\n1. Cleaning 'nan' descriptions...")
+        logger.info("1. Cleaning 'nan' descriptions...")
         total_fixes += fix_nan_descriptions(session, dry_run)
 
-        print("\n2. Cleaning 'nan' company names...")
+        logger.info("2. Cleaning 'nan' company names...")
         total_fixes += fix_nan_companies(session, dry_run)
 
-        print("\n3. Merging duplicate applications...")
+        logger.info("3. Merging duplicate applications...")
         total_fixes += merge_duplicate_applications(session, dry_run)
 
-        print("\n4. Unlinking wrongly-linked emails...")
+        logger.info("4. Unlinking wrongly-linked emails...")
         total_fixes += fix_wrongly_linked_emails(session, dry_run)
 
-        print("\n5. Removing duplicate interviews...")
+        logger.info("5. Removing duplicate interviews...")
         total_fixes += fix_duplicate_interviews(session, dry_run)
 
         if not dry_run:
             session.commit()
-            print(f"\nCommitted {total_fixes} fixes to database.")
+            logger.info("Committed %s fixes to database.", total_fixes)
         else:
-            print(f"\n[DRY RUN] Would apply {total_fixes} fixes. Run without --dry-run to apply.")
+            logger.info("[DRY RUN] Would apply %s fixes. Run without --dry-run to apply.", total_fixes)
 
     return 0
 

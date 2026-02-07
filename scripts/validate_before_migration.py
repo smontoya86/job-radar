@@ -11,6 +11,7 @@ This script should be run before any migration to ensure:
 Usage:
     python scripts/validate_before_migration.py
 """
+import logging
 import sys
 from pathlib import Path
 
@@ -20,6 +21,7 @@ sys.path.insert(0, str(project_root))
 
 from sqlalchemy import func, select
 
+from src.logging_config import setup_logging
 from src.persistence.database import get_session
 from src.persistence.models import (
     Application,
@@ -29,6 +31,8 @@ from src.persistence.models import (
     Resume,
     StatusHistory,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def validate_data_integrity() -> list[str]:
@@ -186,31 +190,33 @@ def get_table_counts() -> dict[str, int]:
 
 
 def main():
-    """Run validation and print results."""
-    print("=" * 60)
-    print("Database Integrity Validation")
-    print("=" * 60)
+    """Run validation and log results."""
+    setup_logging()
 
-    # Print table counts
-    print("\nTable counts:")
+    logger.info("=" * 60)
+    logger.info("Database Integrity Validation")
+    logger.info("=" * 60)
+
+    # Log table counts
+    logger.info("Table counts:")
     counts = get_table_counts()
     for table, count in counts.items():
-        print(f"  {table}: {count}")
+        logger.info("  %s: %s", table, count)
 
     # Run validation
-    print("\nRunning validation checks...")
+    logger.info("Running validation checks...")
     errors = validate_data_integrity()
 
     if errors:
-        print("\n❌ VALIDATION FAILED")
-        print("-" * 40)
+        logger.error("VALIDATION FAILED")
+        logger.error("-" * 40)
         for error in errors:
-            print(f"  - {error}")
-        print("\nPlease fix these issues before running migrations.")
+            logger.error("  - %s", error)
+        logger.error("Please fix these issues before running migrations.")
         sys.exit(1)
     else:
-        print("\n✅ All validation checks passed!")
-        print("Database is ready for migration.")
+        logger.info("All validation checks passed!")
+        logger.info("Database is ready for migration.")
         sys.exit(0)
 
 

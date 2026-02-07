@@ -1,5 +1,6 @@
 """Workday career site collector."""
 import asyncio
+import logging
 import random
 from datetime import datetime
 from typing import Optional
@@ -8,6 +9,9 @@ import aiohttp
 from bs4 import BeautifulSoup
 
 from .base import BaseCollector, JobData
+from .utils import http_post_json
+
+logger = logging.getLogger(__name__)
 
 
 class WorkdayCollector(BaseCollector):
@@ -106,7 +110,8 @@ class WorkdayCollector(BaseCollector):
         }
 
         try:
-            async with session.post(
+            data = await http_post_json(
+                session,
                 url,
                 json=payload,
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
@@ -114,25 +119,21 @@ class WorkdayCollector(BaseCollector):
                     "Content-Type": "application/json",
                     "Accept": "application/json",
                 },
-            ) as response:
-                if response.status != 200:
-                    return []
+            )
+            if data is None:
+                return []
 
-                data = await response.json()
-                jobs = []
+            jobs = []
 
-                for posting in data.get("jobPostings", []):
-                    job = self._parse_job(posting, slug, company_name)
-                    if job:
-                        jobs.append(job)
+            for posting in data.get("jobPostings", []):
+                job = self._parse_job(posting, slug, company_name)
+                if job:
+                    jobs.append(job)
 
-                return jobs
+            return jobs
 
-        except asyncio.TimeoutError:
-            print(f"Workday timeout for {company_name}")
-            return []
         except Exception as e:
-            print(f"Workday error for {company_name}: {e}")
+            logger.error("Workday error for %s: %s", company_name, e)
             return []
 
     def _parse_job(
@@ -200,5 +201,5 @@ class WorkdayCollector(BaseCollector):
                 },
             )
         except Exception as e:
-            print(f"Error parsing Workday job for {company_name}: {e}")
+            logger.error("Error parsing Workday job for %s: %s", company_name, e)
             return None

@@ -1,6 +1,138 @@
 """Shared utilities for job collectors."""
+import asyncio
+import logging
+import random
 from datetime import datetime
 from typing import Optional
+
+import aiohttp
+
+logger = logging.getLogger(__name__)
+
+
+async def http_get_json(
+    session: aiohttp.ClientSession,
+    url: str,
+    *,
+    retries: int = 3,
+    **kwargs,
+) -> dict | list | None:
+    """GET request returning parsed JSON with retry on transient failures.
+
+    Retries on 429 (rate limit), 5xx (server error), timeouts, and
+    connection errors with exponential backoff + jitter.
+
+    Returns None on non-retryable errors (400, 403, 404, etc.).
+    """
+    last_error = None
+    for attempt in range(retries):
+        try:
+            async with session.get(url, **kwargs) as resp:
+                if resp.status == 429 or resp.status >= 500:
+                    wait = (2 ** attempt) + random.uniform(0, 1)
+                    logger.warning(
+                        "HTTP %d from %s, retrying in %.1fs (attempt %d/%d)",
+                        resp.status, url, wait, attempt + 1, retries,
+                    )
+                    await asyncio.sleep(wait)
+                    continue
+                if resp.status != 200:
+                    logger.debug("HTTP %d from %s", resp.status, url)
+                    return None
+                return await resp.json()
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            last_error = e
+            if attempt < retries - 1:
+                wait = (2 ** attempt) + random.uniform(0, 1)
+                logger.warning(
+                    "Request to %s failed: %s, retrying in %.1fs (attempt %d/%d)",
+                    url, e, wait, attempt + 1, retries,
+                )
+                await asyncio.sleep(wait)
+
+    if last_error:
+        logger.error("All %d retries failed for %s: %s", retries, url, last_error)
+    return None
+
+
+async def http_post_json(
+    session: aiohttp.ClientSession,
+    url: str,
+    *,
+    retries: int = 3,
+    **kwargs,
+) -> dict | list | None:
+    """POST request returning parsed JSON with retry on transient failures.
+
+    Same retry logic as http_get_json but for POST requests.
+    """
+    last_error = None
+    for attempt in range(retries):
+        try:
+            async with session.post(url, **kwargs) as resp:
+                if resp.status == 429 or resp.status >= 500:
+                    wait = (2 ** attempt) + random.uniform(0, 1)
+                    logger.warning(
+                        "HTTP %d from %s, retrying in %.1fs (attempt %d/%d)",
+                        resp.status, url, wait, attempt + 1, retries,
+                    )
+                    await asyncio.sleep(wait)
+                    continue
+                if resp.status != 200:
+                    logger.debug("HTTP %d from %s", resp.status, url)
+                    return None
+                return await resp.json()
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            last_error = e
+            if attempt < retries - 1:
+                wait = (2 ** attempt) + random.uniform(0, 1)
+                logger.warning(
+                    "Request to %s failed: %s, retrying in %.1fs (attempt %d/%d)",
+                    url, e, wait, attempt + 1, retries,
+                )
+                await asyncio.sleep(wait)
+
+    if last_error:
+        logger.error("All %d retries failed for %s: %s", retries, url, last_error)
+    return None
+
+
+async def http_get_text(
+    session: aiohttp.ClientSession,
+    url: str,
+    *,
+    retries: int = 3,
+    **kwargs,
+) -> str | None:
+    """GET request returning text with retry on transient failures."""
+    last_error = None
+    for attempt in range(retries):
+        try:
+            async with session.get(url, **kwargs) as resp:
+                if resp.status == 429 or resp.status >= 500:
+                    wait = (2 ** attempt) + random.uniform(0, 1)
+                    logger.warning(
+                        "HTTP %d from %s, retrying in %.1fs (attempt %d/%d)",
+                        resp.status, url, wait, attempt + 1, retries,
+                    )
+                    await asyncio.sleep(wait)
+                    continue
+                if resp.status != 200:
+                    return None
+                return await resp.text()
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            last_error = e
+            if attempt < retries - 1:
+                wait = (2 ** attempt) + random.uniform(0, 1)
+                logger.warning(
+                    "Request to %s failed: %s, retrying in %.1fs (attempt %d/%d)",
+                    url, e, wait, attempt + 1, retries,
+                )
+                await asyncio.sleep(wait)
+
+    if last_error:
+        logger.error("All %d retries failed for %s: %s", retries, url, last_error)
+    return None
 
 
 def parse_salary(value) -> Optional[int]:

@@ -1,5 +1,6 @@
 """Greenhouse job board collector."""
 import asyncio
+import logging
 import random
 from datetime import datetime
 from typing import Optional
@@ -7,6 +8,9 @@ from typing import Optional
 import aiohttp
 
 from .base import BaseCollector, JobData
+from .utils import http_get_json
+
+logger = logging.getLogger(__name__)
 
 
 class GreenhouseCollector(BaseCollector):
@@ -189,33 +193,30 @@ class GreenhouseCollector(BaseCollector):
         url = f"https://boards-api.greenhouse.io/v1/boards/{company}/jobs"
 
         try:
-            async with session.get(
+            data = await http_get_json(
+                session,
                 url,
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
-            ) as response:
-                if response.status != 200:
-                    return []
+            )
+            if data is None:
+                return []
 
-                data = await response.json()
-                jobs = []
+            jobs = []
 
-                for job_data in data.get("jobs", []):
-                    job = self._parse_job(job_data, company)
-                    if job:
-                        jobs.append(job)
+            for job_data in data.get("jobs", []):
+                job = self._parse_job(job_data, company)
+                if job:
+                    jobs.append(job)
 
-                # Fetch descriptions for PM-related jobs (to avoid too many API calls)
-                pm_jobs = [j for j in jobs if self._is_pm_related(j.title)]
-                if pm_jobs:
-                    await self._fetch_descriptions(session, company, pm_jobs)
+            # Fetch descriptions for PM-related jobs (to avoid too many API calls)
+            pm_jobs = [j for j in jobs if self._is_pm_related(j.title)]
+            if pm_jobs:
+                await self._fetch_descriptions(session, company, pm_jobs)
 
-                return jobs
+            return jobs
 
-        except asyncio.TimeoutError:
-            print(f"Greenhouse timeout for {company}")
-            return []
         except Exception as e:
-            print(f"Greenhouse error for {company}: {e}")
+            logger.error("Greenhouse error for %s: %s", company, e)
             return []
 
     def _is_pm_related(self, title: str) -> bool:
@@ -255,22 +256,20 @@ class GreenhouseCollector(BaseCollector):
 
                 url = f"https://boards-api.greenhouse.io/v1/boards/{company}/jobs/{job_id}"
 
-                async with session.get(
-                    url,
-                    timeout=aiohttp.ClientTimeout(total=10),
-                ) as response:
-                    if response.status != 200:
-                        continue
+                data = await http_get_json(
+                    session, url, timeout=aiohttp.ClientTimeout(total=10)
+                )
+                if data is None:
+                    continue
 
-                    data = await response.json()
-                    content = data.get("content", "")
+                content = data.get("content", "")
 
-                    if content:
-                        # Content is HTML-encoded, decode first then strip tags
-                        import html
-                        decoded_content = html.unescape(content)
-                        soup = BeautifulSoup(decoded_content, "html.parser")
-                        job.description = soup.get_text(separator=" ", strip=True)
+                if content:
+                    # Content is HTML-encoded, decode first then strip tags
+                    import html
+                    decoded_content = html.unescape(content)
+                    soup = BeautifulSoup(decoded_content, "html.parser")
+                    job.description = soup.get_text(separator=" ", strip=True)
 
             except Exception as e:
                 # Silently continue on error - description fetching is best-effort
@@ -337,5 +336,5 @@ class GreenhouseCollector(BaseCollector):
                 },
             )
         except Exception as e:
-            print(f"Error parsing Greenhouse job: {e}")
+            logger.error("Error parsing Greenhouse job: %s", e)
             return None

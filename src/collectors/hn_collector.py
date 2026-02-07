@@ -1,5 +1,6 @@
 """Hacker News Who's Hiring collector."""
 import asyncio
+import logging
 import re
 from datetime import datetime
 from typing import Optional
@@ -7,6 +8,9 @@ from typing import Optional
 import aiohttp
 
 from .base import BaseCollector, JobData
+from .utils import http_get_json
+
+logger = logging.getLogger(__name__)
 
 
 class HNCollector(BaseCollector):
@@ -37,7 +41,7 @@ class HNCollector(BaseCollector):
             # Get the latest Who's Hiring thread
             thread_id = await self._find_latest_thread()
             if not thread_id:
-                print("No HN Who's Hiring thread found")
+                logger.info("No HN Who's Hiring thread found")
                 return []
 
             # Fetch and parse comments
@@ -45,7 +49,7 @@ class HNCollector(BaseCollector):
             return jobs
 
         except Exception as e:
-            print(f"HN collector error: {e}")
+            logger.error("HN collector error: %s", e)
             return []
 
     async def _find_latest_thread(self) -> Optional[int]:
@@ -54,31 +58,30 @@ class HNCollector(BaseCollector):
             # Get user submissions
             url = f"{self.HN_API_BASE}/user/{self.WHOISHIRING_USER}.json"
 
-            async with session.get(
+            data = await http_get_json(
+                session,
                 url,
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
-            ) as response:
-                if response.status != 200:
-                    return None
-
-                data = await response.json()
-                submitted = data.get("submitted", [])
-
-                if not submitted:
-                    return None
-
-                # Check recent submissions for "Who is hiring"
-                for item_id in submitted[:10]:  # Check last 10 posts
-                    item_url = f"{self.HN_API_BASE}/item/{item_id}.json"
-                    async with session.get(item_url) as item_response:
-                        if item_response.status != 200:
-                            continue
-                        item_data = await item_response.json()
-                        title = item_data.get("title", "").lower()
-                        if "who is hiring" in title:
-                            return item_id
-
+            )
+            if data is None:
                 return None
+
+            submitted = data.get("submitted", [])
+
+            if not submitted:
+                return None
+
+            # Check recent submissions for "Who is hiring"
+            for item_id in submitted[:10]:  # Check last 10 posts
+                item_url = f"{self.HN_API_BASE}/item/{item_id}.json"
+                item_data = await http_get_json(session, item_url)
+                if item_data is None:
+                    continue
+                title = item_data.get("title", "").lower()
+                if "who is hiring" in title:
+                    return item_id
+
+            return None
 
     async def _parse_thread(
         self,
@@ -92,37 +95,37 @@ class HNCollector(BaseCollector):
             # Get thread details
             url = f"{self.HN_API_BASE}/item/{thread_id}.json"
 
-            async with session.get(
+            thread_data = await http_get_json(
+                session,
                 url,
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
-            ) as response:
-                if response.status != 200:
-                    return []
+            )
+            if thread_data is None:
+                return []
 
-                thread_data = await response.json()
-                comment_ids = thread_data.get("kids", [])
+            comment_ids = thread_data.get("kids", [])
 
-                # Limit number of comments to process
-                comment_ids = comment_ids[: self.max_comments]
+            # Limit number of comments to process
+            comment_ids = comment_ids[: self.max_comments]
 
-                # Fetch comments concurrently in batches
-                batch_size = 50
-                for i in range(0, len(comment_ids), batch_size):
-                    batch = comment_ids[i : i + batch_size]
-                    tasks = [
-                        self._fetch_comment(session, cid)
-                        for cid in batch
-                    ]
-                    comments = await asyncio.gather(*tasks, return_exceptions=True)
+            # Fetch comments concurrently in batches
+            batch_size = 50
+            for i in range(0, len(comment_ids), batch_size):
+                batch = comment_ids[i : i + batch_size]
+                tasks = [
+                    self._fetch_comment(session, cid)
+                    for cid in batch
+                ]
+                comments = await asyncio.gather(*tasks, return_exceptions=True)
 
-                    for comment in comments:
-                        if isinstance(comment, Exception) or not comment:
-                            continue
+                for comment in comments:
+                    if isinstance(comment, Exception) or not comment:
+                        continue
 
-                        # Check if matches query
-                        job = self._parse_comment(comment, query_terms, thread_id)
-                        if job:
-                            jobs.append(job)
+                    # Check if matches query
+                    job = self._parse_comment(comment, query_terms, thread_id)
+                    if job:
+                        jobs.append(job)
 
         return jobs
 
@@ -133,17 +136,9 @@ class HNCollector(BaseCollector):
     ) -> Optional[dict]:
         """Fetch a single comment."""
         url = f"{self.HN_API_BASE}/item/{comment_id}.json"
-
-        try:
-            async with session.get(
-                url,
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as response:
-                if response.status != 200:
-                    return None
-                return await response.json()
-        except Exception:
-            return None
+        return await http_get_json(
+            session, url, timeout=aiohttp.ClientTimeout(total=10)
+        )
 
     def _parse_comment(
         self,

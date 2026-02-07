@@ -12,8 +12,8 @@ NC='\033[0m' # No Color
 
 echo -e "${GREEN}Starting Job Radar...${NC}"
 
-# Create data directory if needed
-mkdir -p data logs
+# Create directories
+mkdir -p logs
 
 # Check for required files
 if [ ! -f "config/profile.yaml" ]; then
@@ -49,10 +49,13 @@ docker compose up -d --build
 echo ""
 echo -e "${GREEN}Job Radar is running!${NC}"
 echo ""
-echo "Dashboard: http://localhost:8501"
+echo "  Dashboard:  http://localhost:${DASHBOARD_PORT:-8501}"
+echo "  Database:   PostgreSQL (Docker volume)"
 echo ""
 echo "View logs:"
 echo "  docker compose logs -f dashboard"
 echo "  docker compose logs -f scanner"
+echo "  docker compose logs -f postgres"
 echo ""
 echo "Stop with: ./docker-stop.sh"
+echo "Reset DB:  docker compose down -v"

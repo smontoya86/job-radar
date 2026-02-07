@@ -452,6 +452,19 @@ class EmailParser:
         if name.lower() in generic_words:
             return None
 
+        # Reject names that are too long (likely sentence fragments)
+        if len(name) > 50:
+            return None
+
+        # Reject names that look like sentences (contain common email verbs)
+        sentence_indicators = [
+            "thank you", "working here", "our exceptional", "we appreciate",
+            "submitting your", "means you", "help chang", "connect with",
+        ]
+        name_lower = name.lower()
+        if any(ind in name_lower for ind in sentence_indicators):
+            return None
+
         return name if len(name) >= 2 else None
 
     def _extract_position(self, email: EmailMessage) -> Optional[str]:
@@ -469,12 +482,40 @@ class EmailParser:
             match = re.search(pattern, text, re.IGNORECASE)
             if match:
                 position = match.group(1).strip()
-                # Clean up
-                position = re.sub(r"\s+", " ", position)
-                if len(position) < 100:  # Reasonable length
+                position = self._clean_position(position)
+                if position:
                     return position
 
         return None
+
+    def _clean_position(self, position: str) -> Optional[str]:
+        """Clean and validate an extracted position string."""
+        if not position:
+            return None
+
+        # Normalize whitespace
+        position = re.sub(r"\s+", " ", position).strip()
+
+        # Strip leading "the" (e.g., "the Staff Product Manager, AI" → "Staff Product Manager, AI")
+        position = re.sub(r"^the\s+", "", position, flags=re.IGNORECASE)
+
+        # Strip trailing punctuation
+        position = re.sub(r"[!.,;:]+$", "", position).strip()
+
+        # Reject strings that look like email phrases, not positions
+        reject_starts = [
+            "thank you", "thanks for", "we received", "your application",
+            "submitting your", "we appreciate",
+        ]
+        pos_lower = position.lower()
+        if any(pos_lower.startswith(phrase) for phrase in reject_starts):
+            return None
+
+        # Reasonable length check
+        if len(position) < 3 or len(position) > 100:
+            return None
+
+        return position
 
     def _extract_calendar_link(self, email: EmailMessage) -> Optional[str]:
         """Extract calendar/scheduling link from email."""
@@ -545,6 +586,63 @@ class EmailParser:
                     return stage
 
         return None
+
+    # Map ATS/platform domains to source names for analytics
+    SOURCE_DOMAIN_MAP = {
+        "linkedin.com": "linkedin",
+        "jobs-noreply@linkedin.com": "linkedin",
+        "greenhouse.io": "greenhouse",
+        "greenhouse-mail.io": "greenhouse",
+        "lever.co": "lever",
+        "hire.lever.co": "lever",
+        "ashbyhq.com": "ashby",
+        "workday.com": "workday",
+        "myworkday.com": "workday",
+        "myworkdayjobs.com": "workday",
+        "smartrecruiters.com": "smartrecruiters",
+        "indeed.com": "indeed",
+        "glassdoor.com": "glassdoor",
+        "icims.com": "icims",
+        "talent.icims.com": "icims",
+        "hi.wellfound.com": "wellfound",
+        "wellfound.com": "wellfound",
+        "jobvite.com": "jobvite",
+        "rippling.com": "rippling",
+        "ats.rippling.com": "rippling",
+        "workablemail.com": "workable",
+        "candidates.workablemail.com": "workable",
+        "breezy.hr": "breezy",
+        "bamboohr.com": "bamboohr",
+        "teamtailor.com": "teamtailor",
+        "dover.io": "dover",
+        "gem.com": "gem",
+        "appreview.gem.com": "gem",
+    }
+
+    @classmethod
+    def infer_source(cls, from_address: str) -> str:
+        """Infer application source from email sender address.
+
+        Returns a specific source name (e.g., 'linkedin', 'greenhouse')
+        instead of the generic 'email_import'.
+        """
+        if not from_address:
+            return "email_import"
+
+        from_lower = from_address.lower()
+        domain = from_lower.split("@")[-1] if "@" in from_lower else ""
+
+        # Check full address first (e.g., jobs-noreply@linkedin.com)
+        if from_lower in cls.SOURCE_DOMAIN_MAP:
+            return cls.SOURCE_DOMAIN_MAP[from_lower]
+
+        # Check domain and subdomains
+        for pattern_domain, source in cls.SOURCE_DOMAIN_MAP.items():
+            if domain == pattern_domain or domain.endswith("." + pattern_domain):
+                return source
+
+        # If it's a company domain (not ATS), keep as email_import
+        return "email_import"
 
     def is_job_related(self, email: EmailMessage) -> bool:
         """Quick check if email is likely job-related."""

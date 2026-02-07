@@ -1,16 +1,22 @@
 #!/usr/bin/env python3
 """Import historical job-related emails from Gmail since layoff date."""
+import logging
 import sys
 from datetime import datetime
 
 from scripts.bootstrap import settings, get_session, init_db
+from src.logging_config import setup_logging
+
+logger = logging.getLogger(__name__)
 
 
 def main():
     """Run historical email import."""
-    print("Historical Email Import")
-    print("=" * 50)
-    print()
+    setup_logging()
+
+    logger.info("Historical Email Import")
+    logger.info("=" * 50)
+    logger.info("")
 
     # Initialize database
     init_db()
@@ -27,11 +33,11 @@ def main():
         )
 
         if not auth.is_authenticated():
-            print("Gmail not authenticated. Run setup_gmail.py first.")
+            logger.error("Gmail not authenticated. Run setup_gmail.py first.")
             return 1
 
     except ImportError as e:
-        print(f"Gmail libraries not installed: {e}")
+        logger.error("Gmail libraries not installed: %s", e)
         return 1
 
     # Set date range (from layoff date)
@@ -41,16 +47,16 @@ def main():
     # Gmail label where job emails are stored
     JOB_EMAIL_LABEL = "Job Posting"
 
-    print(f"Importing emails from {start_date.date()} to {end_date.date()}")
-    print(f"Looking in Gmail label: '{JOB_EMAIL_LABEL}'")
-    print()
+    logger.info("Importing emails from %s to %s", start_date.date(), end_date.date())
+    logger.info("Looking in Gmail label: '%s'", JOB_EMAIL_LABEL)
+    logger.info("")
 
     # Initialize clients
     client = GmailClient(auth)
     parser = EmailParser()
 
     # Search for job emails in the specific label
-    print(f"Searching for emails in '{JOB_EMAIL_LABEL}' folder...")
+    logger.info("Searching for emails in '%s' folder...", JOB_EMAIL_LABEL)
     message_ids = client.search_job_emails(
         after_date=start_date,
         before_date=end_date,
@@ -58,11 +64,11 @@ def main():
         label=JOB_EMAIL_LABEL,
     )
 
-    print(f"Found {len(message_ids)} potential emails")
-    print()
+    logger.info("Found %s potential emails", len(message_ids))
+    logger.info("")
 
     if not message_ids:
-        print("No emails found. Check your Gmail search filters.")
+        logger.warning("No emails found. Check your Gmail search filters.")
         return 0
 
     # Process emails
@@ -80,7 +86,7 @@ def main():
         for i, msg_id in enumerate(message_ids):
             # Progress indicator
             if (i + 1) % 50 == 0:
-                print(f"  Processed {i + 1}/{len(message_ids)} emails...")
+                logger.info("  Processed %s/%s emails...", i + 1, len(message_ids))
 
             # Check if already imported
             stmt = select(EmailImport).where(EmailImport.gmail_message_id == msg_id)
@@ -158,14 +164,14 @@ def main():
 
         session.commit()
 
-    print()
-    print("=" * 50)
-    print("Import Complete!")
-    print(f"  Emails imported: {imported_count}")
-    print(f"  Applications created: {application_count}")
-    print(f"  Already imported (skipped): {skipped_count}")
-    print()
-    print("Run the dashboard to view your imported applications.")
+    logger.info("")
+    logger.info("=" * 50)
+    logger.info("Import Complete!")
+    logger.info("  Emails imported: %s", imported_count)
+    logger.info("  Applications created: %s", application_count)
+    logger.info("  Already imported (skipped): %s", skipped_count)
+    logger.info("")
+    logger.info("Run the dashboard to view your imported applications.")
 
     return 0
 

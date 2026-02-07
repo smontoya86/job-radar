@@ -111,9 +111,10 @@ with tab1:
             # Common requirements
             if insights.common_requirements:
                 st.markdown("---")
-                st.subheader("📝 Common Requirements Phrases")
+                st.subheader("📝 Common Requirement Phrases")
+                st.markdown("Frequently mentioned requirements across rejected job descriptions:")
                 for req in insights.common_requirements:
-                    st.write(f"• {req[:100]}...")
+                    st.write(f"• {req}")
 
 with tab2:
     st.subheader("Add Job Descriptions to Rejected Applications")

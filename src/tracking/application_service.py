@@ -1,4 +1,5 @@
 """Application tracking service."""
+import logging
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -7,8 +8,10 @@ from sqlalchemy.orm import Session
 
 from dateutil import parser as dateutil_parser
 
-from src.gmail.parser import EmailType, ParsedEmail
-from src.persistence.models import Application, EmailImport, Interview, Job, StatusHistory
+from src.gmail.parser import EmailParser, EmailType, ParsedEmail
+from src.persistence.models import Application, EmailImport, Interview, Job, StatusHistory, normalize_company_key, normalize_company_key_fuzzy
+
+logger = logging.getLogger(__name__)
 
 
 class ApplicationService:
@@ -287,6 +290,11 @@ class ApplicationService:
         # Check if application already exists for this company
         existing = self._find_application_by_company(parsed_email.company)
 
+        # Infer a more specific source from the email sender domain
+        source = "email_import"
+        if parsed_email.raw_email:
+            source = EmailParser.infer_source(parsed_email.raw_email.from_address)
+
         if existing:
             # Try to link to a Job before updating
             self._try_link_to_job(existing)
@@ -297,7 +305,7 @@ class ApplicationService:
             app = self.create_application(
                 company=parsed_email.company,
                 position=parsed_email.position or "Unknown Position",
-                source="email_import",
+                source=source,
             )
             # Try to link newly created app to a Job
             self._try_link_to_job(app)
@@ -309,7 +317,7 @@ class ApplicationService:
             app = self.create_application(
                 company=parsed_email.company,
                 position=parsed_email.position or "Unknown Position",
-                source="email_import",
+                source=source,
             )
             self._try_link_to_job(app)
             self.update_status(
@@ -323,7 +331,7 @@ class ApplicationService:
             app = self.create_application(
                 company=parsed_email.company,
                 position=parsed_email.position or "Unknown Position",
-                source="email_import",
+                source=source,
             )
             self._try_link_to_job(app)
             self._update_from_email(app, parsed_email)
@@ -333,7 +341,7 @@ class ApplicationService:
             app = self.create_application(
                 company=parsed_email.company,
                 position=parsed_email.position or "Unknown Position",
-                source="email_import",
+                source=source,
             )
             self._try_link_to_job(app)
             self.update_status(
@@ -351,6 +359,11 @@ class ApplicationService:
         Sets application.job_id and copies Job.description to
         application.job_description (if not already set).
         Picks the most recently discovered Job when multiple match.
+
+        Matching strategies (in order):
+        1. Exact company_key match (fast, indexed)
+        2. Fuzzy key match — strips spaces/punctuation so
+           'Fetchrewards' matches 'Fetch Rewards'
         """
         if application.job_id:
             # Already linked — still copy description if missing
@@ -360,15 +373,15 @@ class ApplicationService:
                     application.job_description = job.description
             return
 
-        # Find matching job by company name (case-insensitive, most recent first)
-        stmt = (
-            select(Job)
-            .where(func.lower(Job.company) == application.company.lower())
-            .order_by(Job.discovered_at.desc())
-            .limit(1)
-        )
-        result = self.session.execute(stmt)
-        job = result.scalar_one_or_none()
+        # Strategy 1: Exact company_key match (indexed, fast)
+        key = normalize_company_key(application.company)
+        job = self._find_job_by_company_key(key)
+
+        # Strategy 2: Fuzzy key match (strip all non-alphanumeric)
+        if not job:
+            fuzzy_key = normalize_company_key_fuzzy(application.company)
+            if fuzzy_key:
+                job = self._find_job_by_fuzzy_key(fuzzy_key)
 
         if not job:
             return
@@ -376,6 +389,67 @@ class ApplicationService:
         application.job_id = job.id
         if not application.job_description and job.description:
             application.job_description = job.description
+
+    def _find_job_by_company_key(self, key: str) -> Optional[Job]:
+        """Find the most recent job matching an exact company_key."""
+        stmt = (
+            select(Job)
+            .where(Job.company_key == key)
+            .order_by(Job.discovered_at.desc())
+            .limit(1)
+        )
+        result = self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    def _find_job_by_fuzzy_key(self, fuzzy_key: str) -> Optional[Job]:
+        """Find job by fuzzy key (spaces/punctuation stripped).
+
+        Loads distinct company_keys from the jobs table and checks
+        if their fuzzy form matches. At current scale (~500 jobs)
+        this is fast enough; can be replaced with a stored column
+        + index if the table grows significantly.
+        """
+        stmt = (
+            select(Job.company_key)
+            .distinct()
+        )
+        result = self.session.execute(stmt)
+        company_keys = [row[0] for row in result if row[0]]
+
+        matching_key = None
+        for ck in company_keys:
+            if normalize_company_key_fuzzy(ck) == fuzzy_key:
+                matching_key = ck
+                break
+
+        if not matching_key:
+            return None
+
+        # Get the most recent job with this company_key
+        return self._find_job_by_company_key(matching_key)
+
+    def relink_unlinked_applications(self) -> int:
+        """Try to link all unlinked applications to jobs.
+
+        Called after job scans to catch applications created before
+        matching jobs were collected.
+
+        Returns:
+            Number of newly linked applications.
+        """
+        stmt = select(Application).where(Application.job_id.is_(None))
+        unlinked = self.session.execute(stmt).scalars().all()
+
+        linked = 0
+        for app in unlinked:
+            self._try_link_to_job(app)
+            if app.job_id:
+                linked += 1
+                logger.info("Re-linked %s to job %s", app.company, app.job_id)
+
+        if linked:
+            self.session.commit()
+        return linked
 
     @staticmethod
     def _escape_like(value: str) -> str:
@@ -386,18 +460,18 @@ class ApplicationService:
         self,
         company: str,
     ) -> Optional[Application]:
-        """Find existing application by company name."""
-        # Try exact match first
-        stmt = select(Application).where(
-            func.lower(Application.company) == company.lower()
-        )
+        """Find existing application by company name using indexed company_key."""
+        key = normalize_company_key(company)
+
+        # Fast indexed lookup on company_key
+        stmt = select(Application).where(Application.company_key == key)
         result = self.session.execute(stmt)
         app = result.scalars().first()
 
         if app:
             return app
 
-        # Try partial match - return first match if multiple
+        # Fallback: partial match for edge cases (e.g. "Meetcleo" vs "Cleo")
         escaped = self._escape_like(company)
         stmt = select(Application).where(
             Application.company.ilike(f"%{escaped}%", escape="\\")

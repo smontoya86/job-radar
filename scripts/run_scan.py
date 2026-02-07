@@ -12,41 +12,47 @@ Environment variables:
     SLACK_WEBHOOK_URL: Slack webhook for notifications (optional)
 """
 import asyncio
+import logging
 import sys
 
 from scripts.bootstrap import settings, init_db
+from src.logging_config import setup_logging
 from src.persistence.cleanup import cleanup_stale_data
 from src.main import run_job_scan
+
+logger = logging.getLogger(__name__)
 
 
 async def main():
     """Run a single job scan with cleanup."""
-    print("Job Radar - One-time Scan")
-    print("=" * 40)
-    print(f"Database: {settings.database_url[:50]}...")
-    print(f"Profile: {settings.profile_path}")
-    print()
+    setup_logging()
+
+    logger.info("Job Radar - One-time Scan")
+    logger.info("=" * 40)
+    logger.info("Database: %s...", settings.database_url[:50])
+    logger.info("Profile: %s", settings.profile_path)
+    logger.info("")
 
     # Initialize database
     init_db()
-    print("Database initialized")
+    logger.info("Database initialized")
 
     # Run cleanup before scan
     cleanup_results = cleanup_stale_data()
-    print()
+    logger.info("")
 
     # Run the job scan
     await run_job_scan()
 
-    print("\nScan complete. Exiting.")
+    logger.info("Scan complete. Exiting.")
 
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\nInterrupted.")
+        logger.info("Interrupted.")
         sys.exit(1)
     except Exception as e:
-        print(f"\nError: {e}")
+        logger.error("Error: %s", e)
         sys.exit(1)

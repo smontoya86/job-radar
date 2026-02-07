@@ -1,5 +1,6 @@
 """Main entry point for Job Radar scheduler."""
 import asyncio
+import logging
 import random
 import sys
 from datetime import datetime, timezone
@@ -11,22 +12,27 @@ sys.path.insert(0, str(project_root))
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
+from sqlalchemy import select
 
 from config.settings import settings
 from src.collectors import (
     AdzunaCollector,
     AshbyCollector,
     GreenhouseCollector,
+    HimalayasCollector,
     HNCollector,
     JSearchCollector,
     LeverCollector,
     RemoteOKCollector,
+    RemotiveCollector,
     SearchDiscoveryCollector,
     SerpApiCollector,
     SmartRecruitersCollector,
+    TheMuseCollector,
     WorkdayCollector,
 )
 from src.dedup.deduplicator import Deduplicator
+from src.logging_config import setup_logging
 from src.matching.keyword_matcher import KeywordMatcher
 from src.matching.scorer import JobScorer
 from src.notifications.slack_notifier import SlackNotifier
@@ -35,15 +41,28 @@ from src.persistence.models import Job
 from src.persistence.cleanup import cleanup_stale_data
 from src.onboarding.config_checker import is_configured, get_missing_config
 
+logger = logging.getLogger(__name__)
+
 # Maximum description length to store (for storage optimization)
 MAX_DESCRIPTION_LENGTH = 2000
 
 
-async def run_job_scan():
-    """Run a complete job scan cycle."""
-    print(f"\n{'='*60}")
-    print(f"Starting job scan at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"{'='*60}")
+async def run_job_scan(on_progress=None):
+    """Run a complete job scan cycle.
+
+    Args:
+        on_progress: Optional callback(step: str, detail: str, pct: float)
+                     for reporting progress to a UI. pct is 0.0-1.0.
+    """
+    def _progress(step, detail="", pct=0.0):
+        if on_progress:
+            on_progress(step, detail, pct)
+
+    logger.info("=" * 60)
+    logger.info("Starting job scan at %s", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    logger.info("=" * 60)
+
+    _progress("Initializing", "Cleaning up stale data...", 0.0)
 
     # Run cleanup to maintain storage limits
     cleanup_stale_data()
@@ -55,7 +74,7 @@ async def run_job_scan():
 
     # Get search queries from profile
     search_queries = matcher.get_search_queries()
-    print(f"Search queries: {search_queries[:5]}...")
+    logger.info("Search queries: %s...", search_queries[:5])
 
     # Initialize collectors — all compliant, API-based sources
     collectors = [
@@ -77,68 +96,81 @@ async def run_job_scan():
             )
         )
     else:
-        print("Adzuna credentials not configured, skipping collector")
+        logger.info("Adzuna credentials not configured, skipping collector")
 
     serpapi_placeholders = {"your_key", "", None}
     if settings.serpapi_key not in serpapi_placeholders:
         collectors.append(SerpApiCollector(api_key=settings.serpapi_key))
         collectors.append(SearchDiscoveryCollector(api_key=settings.serpapi_key))
     else:
-        print("SerpApi key not configured, skipping SerpApi + Search Discovery")
+        logger.info("SerpApi key not configured, skipping SerpApi + Search Discovery")
 
     jsearch_placeholders = {"your_key", "", None}
     if settings.jsearch_api_key not in jsearch_placeholders:
         collectors.append(JSearchCollector(api_key=settings.jsearch_api_key))
     else:
-        print("JSearch API key not configured, skipping collector")
+        logger.info("JSearch API key not configured, skipping collector")
 
     # ATS board collectors (no API key needed)
     collectors.append(WorkdayCollector())
     collectors.append(SmartRecruitersCollector())
+    collectors.append(RemotiveCollector())
+    collectors.append(HimalayasCollector())
+    collectors.append(TheMuseCollector())
 
     # Collect jobs from all sources with rate limiting
     all_jobs = []
+    total_collectors = len(collectors)
     for i, collector in enumerate(collectors):
+        # Progress: collectors take ~80% of the total time (0.05 to 0.85)
+        pct = 0.05 + (i / total_collectors) * 0.80
+        _progress("Collecting", f"Scanning {collector.name}... ({i + 1}/{total_collectors})", pct)
+
         try:
-            print(f"Collecting from {collector.name}...")
+            logger.info("Collecting from %s...", collector.name)
             jobs = await collector.collect(search_queries)
-            print(f"  Found {len(jobs)} jobs from {collector.name}")
+            logger.info("  Found %d jobs from %s", len(jobs), collector.name)
             all_jobs.extend(jobs)
 
             # Rate limiting: wait between collectors to avoid detection
             # Skip delay after the last collector
             if i < len(collectors) - 1:
                 delay = random.uniform(5.0, 15.0)
-                print(f"  Rate limit: waiting {delay:.1f}s before next collector...")
+                logger.info("  Rate limit: waiting %.1fs before next collector...", delay)
                 await asyncio.sleep(delay)
 
         except Exception as e:
-            print(f"  Error collecting from {collector.name}: {e}")
+            logger.error("Error collecting from %s: %s", collector.name, e, exc_info=True)
 
-    print(f"\nTotal jobs collected: {len(all_jobs)}")
+    logger.info("Total jobs collected: %d", len(all_jobs))
 
     if not all_jobs:
-        print("No jobs found. Check your search queries and collectors.")
+        _progress("Complete", "No jobs found.", 1.0)
+        logger.info("No jobs found. Check your search queries and collectors.")
         return
 
     # Score and filter jobs
-    print("\nScoring jobs...")
+    _progress("Scoring", f"Scoring {len(all_jobs)} jobs...", 0.87)
+    logger.info("Scoring jobs...")
     scored_jobs = scorer.score_jobs(all_jobs)
-    print(f"Jobs passing minimum score: {len(scored_jobs)}")
+    logger.info("Jobs passing minimum score: %d", len(scored_jobs))
 
     # Deduplicate
-    print("\nDeduplicating...")
+    _progress("Deduplicating", f"Checking {len(scored_jobs)} scored jobs for duplicates...", 0.92)
+    logger.info("Deduplicating...")
     with get_session() as session:
         deduplicator = Deduplicator(session)
         unique_jobs = deduplicator.deduplicate(scored_jobs, check_db=True)
-        print(f"New unique jobs: {len(unique_jobs)}")
+        logger.info("New unique jobs: %d", len(unique_jobs))
 
         if not unique_jobs:
-            print("No new jobs to process.")
+            _progress("Complete", "No new jobs to process (all duplicates).", 1.0)
+            logger.info("No new jobs to process.")
             return
 
         # Save to database
-        print("\nSaving to database...")
+        _progress("Saving", f"Saving {len(unique_jobs)} new jobs to database...", 0.95)
+        logger.info("Saving to database...")
         new_job_count = 0
         for scored in unique_jobs:
             job_data = scored.job
@@ -169,23 +201,22 @@ async def run_job_scan():
             new_job_count += 1
 
         session.commit()
-        print(f"Saved {new_job_count} new jobs")
+        logger.info("Saved %d new jobs", new_job_count)
 
     # Send notifications
     if settings.slack_webhook_url:
-        print("\nSending Slack notifications...")
+        logger.info("Sending Slack notifications...")
         notifier = SlackNotifier(
             webhook_url=settings.slack_webhook_url,
             min_score=50,  # Lowered from 60 to get more notifications
         )
         notified_count = await notifier.notify_batch(unique_jobs)
-        print(f"Sent {notified_count} notifications")
+        logger.info("Sent %d notifications", notified_count)
 
         # Update notified timestamp
         with get_session() as session:
             for scored in unique_jobs[:notified_count]:
                 # Find job by fingerprint and update
-                from sqlalchemy import select
                 stmt = select(Job).where(Job.fingerprint == scored.fingerprint)
                 result = session.execute(stmt)
                 job = result.scalar_one_or_none()
@@ -193,13 +224,32 @@ async def run_job_scan():
                     job.notified_at = datetime.now(timezone.utc)
             session.commit()
 
-    print(f"\nJob scan completed at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"{'='*60}\n")
+    # Re-link unlinked applications to newly collected jobs
+    from src.tracking.application_service import ApplicationService
+    with get_session() as session:
+        service = ApplicationService(session)
+        relinked = service.relink_unlinked_applications()
+        if relinked:
+            logger.info("Re-linked %d applications to jobs", relinked)
+
+    _progress("Complete", f"Scan complete! Found {new_job_count} new jobs.", 1.0)
+    logger.info("Job scan completed at %s", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    logger.info("=" * 60)
 
 
-async def run_email_import():
-    """Import new job-related emails from Gmail."""
-    print(f"\nChecking Gmail for job emails...")
+async def run_email_import(on_progress=None):
+    """Import new job-related emails from Gmail.
+
+    Args:
+        on_progress: Optional callback(step: str, detail: str, pct: float)
+                     for reporting progress to a UI. pct is 0.0-1.0.
+    """
+    def _progress(step, detail="", pct=0.0):
+        if on_progress:
+            on_progress(step, detail, pct)
+
+    logger.info("Checking Gmail for job emails...")
+    _progress("Connecting", "Connecting to Gmail...", 0.0)
 
     try:
         from src.gmail.auth import GmailAuth
@@ -213,15 +263,17 @@ async def run_email_import():
         )
 
         if not auth.is_authenticated():
-            print("Gmail not authenticated. Run setup_gmail.py first.")
+            _progress("Complete", "Gmail not authenticated. Run setup_gmail.py first.", 1.0)
+            logger.info("Gmail not authenticated. Run setup_gmail.py first.")
             return
 
         client = GmailClient(auth)
         parser = EmailParser()
 
         # Search for recent job emails in the "Job Posting" label
+        _progress("Searching", "Searching for job emails...", 0.15)
         from datetime import timedelta
-        after_date = datetime.now() - timedelta(days=1)  # Last 24 hours
+        after_date = datetime.now() - timedelta(days=14)  # Last 2 weeks
 
         message_ids = client.search_job_emails(
             after_date=after_date,
@@ -229,21 +281,27 @@ async def run_email_import():
             label="Job Posting",  # Only check labeled emails
         )
 
-        print(f"Found {len(message_ids)} potential job emails")
+        logger.info("Found %d potential job emails", len(message_ids))
 
         if not message_ids:
+            _progress("Complete", "No new emails found.", 1.0)
             return
 
         # Process emails
         from src.tracking.application_service import ApplicationService
         from src.persistence.models import EmailImport
 
+        _progress("Processing", f"Processing {len(message_ids)} emails...", 0.3)
+
+        processed_count = 0
         with get_session() as session:
             app_service = ApplicationService(session)
 
-            for msg_id in message_ids:
+            for idx, msg_id in enumerate(message_ids):
+                pct = 0.3 + (idx / len(message_ids)) * 0.65
+                _progress("Processing", f"Email {idx + 1}/{len(message_ids)}...", pct)
+
                 # Check if already imported
-                from sqlalchemy import select
                 stmt = select(EmailImport).where(EmailImport.gmail_message_id == msg_id)
                 result = session.execute(stmt)
                 if result.scalar_one_or_none():
@@ -273,6 +331,7 @@ async def run_email_import():
                     },
                 )
                 session.add(email_import)
+                processed_count += 1
 
                 # Create or update application
                 if parsed.email_type != EmailType.UNKNOWN and parsed.company:
@@ -280,43 +339,47 @@ async def run_email_import():
                     if app:
                         email_import.application_id = app.id
                         email_import.processed = True
-                        print(f"  Processed: {parsed.email_type.value} from {parsed.company}")
+                        logger.info("  Processed: %s from %s", parsed.email_type.value, parsed.company)
 
             session.commit()
 
-        print("Email import completed")
+        _progress("Complete", f"Imported {processed_count} new emails.", 1.0)
+        logger.info("Email import completed")
 
     except ImportError as e:
-        print(f"Gmail integration not available: {e}")
+        _progress("Error", f"Gmail not available: {e}", 1.0)
+        logger.error("Gmail integration not available: %s", e)
     except Exception as e:
-        print(f"Email import error: {e}")
+        _progress("Error", f"Sync failed: {e}", 1.0)
+        logger.error("Email import error: %s", e, exc_info=True)
 
 
 async def async_main():
     """Async main entry point."""
-    print("Job Radar Starting...")
-    print(f"Database: {settings.database_url}")
-    print(f"Profile: {settings.profile_path}")
+    setup_logging(log_file="logs/jobradar.log")
+    logger.info("Job Radar Starting...")
+    logger.info("Database: %s", settings.database_url)
+    logger.info("Profile: %s", settings.profile_path)
 
     # Check if configured
     if not is_configured(project_root):
-        print("\n" + "=" * 60)
-        print("ERROR: Job Radar is not configured!")
-        print("=" * 60)
+        logger.error("=" * 60)
+        logger.error("ERROR: Job Radar is not configured!")
+        logger.error("=" * 60)
         missing = get_missing_config(project_root)
         for item in missing:
-            print(f"  - {item}")
-        print("\nTo configure Job Radar:")
-        print("  1. Run the dashboard: streamlit run dashboard/app.py")
-        print("  2. Complete the Setup Wizard")
-        print("\nOr manually create config/profile.yaml and .env files.")
-        print("See config/profile.yaml.example and .env.example for templates.")
-        print("=" * 60)
+            logger.error("  - %s", item)
+        logger.error("To configure Job Radar:")
+        logger.error("  1. Run the dashboard: streamlit run dashboard/app.py")
+        logger.error("  2. Complete the Setup Wizard")
+        logger.error("Or manually create config/profile.yaml and .env files.")
+        logger.error("See config/profile.yaml.example and .env.example for templates.")
+        logger.error("=" * 60)
         return
 
     # Initialize database
     init_db()
-    print("Database initialized")
+    logger.info("Database initialized")
 
     # Create scheduler
     scheduler = AsyncIOScheduler()
@@ -341,24 +404,24 @@ async def async_main():
 
     # Start scheduler
     scheduler.start()
-    print(f"\nScheduler started:")
-    print(f"  - Job scan every {settings.job_check_interval_minutes} minutes")
-    print(f"  - Email import every {settings.email_check_interval_minutes} minutes")
-    print("\nRunning initial job scan...")
+    logger.info("Scheduler started:")
+    logger.info("  - Job scan every %d minutes", settings.job_check_interval_minutes)
+    logger.info("  - Email import every %d minutes", settings.email_check_interval_minutes)
+    logger.info("Running initial job scan...")
 
     try:
         # Run initial scan
         await run_job_scan()
         await run_email_import()
 
-        print("\nJob Radar running. Press Ctrl+C to stop.")
+        logger.info("Job Radar running. Press Ctrl+C to stop.")
 
         # Keep running forever
         while True:
             await asyncio.sleep(60)
 
     except asyncio.CancelledError:
-        print("\nShutting down...")
+        logger.info("Shutting down...")
     finally:
         scheduler.shutdown()
 
@@ -368,7 +431,7 @@ def main():
     try:
         asyncio.run(async_main())
     except KeyboardInterrupt:
-        print("\nShutdown complete.")
+        logger.info("Shutdown complete.")
 
 
 if __name__ == "__main__":

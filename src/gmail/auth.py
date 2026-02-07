@@ -1,4 +1,5 @@
 """Gmail OAuth2 authentication."""
+import logging
 import os
 from pathlib import Path
 from typing import Optional
@@ -6,6 +7,8 @@ from typing import Optional
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
+
+logger = logging.getLogger(__name__)
 
 # Gmail API scopes
 SCOPES = [
@@ -56,7 +59,7 @@ class GmailAuth:
                 try:
                     self._credentials.refresh(Request())
                 except Exception as e:
-                    print(f"Token refresh failed: {e}")
+                    logger.error("Token refresh failed: %s", e)
                     self._credentials = None
             else:
                 self._credentials = self._run_oauth_flow()
@@ -70,8 +73,8 @@ class GmailAuth:
     def _run_oauth_flow(self) -> Optional[Credentials]:
         """Run the OAuth2 flow to get new credentials."""
         if not self.credentials_file.exists():
-            print(f"Credentials file not found: {self.credentials_file}")
-            print("Please download OAuth credentials from Google Cloud Console")
+            logger.error("Credentials file not found: %s", self.credentials_file)
+            logger.error("Please download OAuth credentials from Google Cloud Console")
             return None
 
         try:
@@ -83,7 +86,7 @@ class GmailAuth:
             return credentials
 
         except Exception as e:
-            print(f"OAuth flow failed: {e}")
+            logger.error("OAuth flow failed: %s", e)
             return None
 
     def _save_token(self) -> None:
@@ -113,6 +116,6 @@ class GmailAuth:
                 self._credentials = None
                 return True
             except Exception as e:
-                print(f"Revoke failed: {e}")
+                logger.error("Revoke failed: %s", e)
                 return False
         return True

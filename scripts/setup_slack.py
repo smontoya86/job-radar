@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """Setup script for Slack webhook notifications."""
 import asyncio
+import logging
 import sys
 
 from scripts.bootstrap import settings
+from src.logging_config import setup_logging
 from src.notifications.slack_notifier import SlackNotifier
+
+logger = logging.getLogger(__name__)
 
 
 async def test_webhook(webhook_url: str) -> bool:
@@ -15,24 +19,26 @@ async def test_webhook(webhook_url: str) -> bool:
 
 def main():
     """Run Slack setup."""
+    setup_logging()
+
     print("Slack Webhook Setup")
     print("=" * 50)
     print()
 
     # Check for existing webhook
     if settings.slack_webhook_url:
-        print("Found existing webhook URL in settings.")
+        logger.info("Found existing webhook URL in settings.")
         print()
 
         # Test it
-        print("Testing webhook...")
+        logger.info("Testing webhook...")
         success = asyncio.run(test_webhook(settings.slack_webhook_url))
 
         if success:
-            print("Webhook is working! Check your Slack channel for a test message.")
+            logger.info("Webhook is working! Check your Slack channel for a test message.")
             return 0
         else:
-            print("Webhook test failed. Please check the URL.")
+            logger.error("Webhook test failed. Please check the URL.")
             print()
 
     print("To set up Slack notifications:")
@@ -56,17 +62,17 @@ def main():
 
     # Test the webhook
     print()
-    print("Testing webhook...")
+    logger.info("Testing webhook...")
     success = asyncio.run(test_webhook(webhook_url))
 
     if success:
-        print("Success! Check your Slack channel for a test message.")
+        logger.info("Success! Check your Slack channel for a test message.")
         print()
         print("Add this to your .env file:")
-        print(f"SLACK_WEBHOOK_URL={webhook_url}")
+        print("SLACK_WEBHOOK_URL=%s" % webhook_url)
         return 0
     else:
-        print("Test failed. Please check the URL and try again.")
+        logger.error("Test failed. Please check the URL and try again.")
         return 1
 
 

@@ -1,11 +1,15 @@
 """RemoteOK.com job collector."""
 import asyncio
+import logging
 from datetime import datetime
 from typing import Optional
 
 import aiohttp
 
 from .base import BaseCollector, JobData
+from .utils import http_get_json
+
+logger = logging.getLogger(__name__)
 
 
 class RemoteOKCollector(BaseCollector):
@@ -29,33 +33,29 @@ class RemoteOKCollector(BaseCollector):
 
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(
+                data = await http_get_json(
+                    session,
                     self.API_URL,
                     timeout=aiohttp.ClientTimeout(total=self.timeout),
                     headers={"User-Agent": "JobRadar/1.0"},
-                ) as response:
-                    if response.status != 200:
-                        print(f"RemoteOK API returned status {response.status}")
-                        return []
+                )
+                if data is None:
+                    return []
 
-                    data = await response.json()
+                # First item is a legal notice, skip it
+                jobs = data[1:] if len(data) > 1 else []
 
-                    # First item is a legal notice, skip it
-                    jobs = data[1:] if len(data) > 1 else []
+                # Filter by search queries
+                query_terms = [q.lower() for q in search_queries]
 
-                    # Filter by search queries
-                    query_terms = [q.lower() for q in search_queries]
+                for job_data in jobs:
+                    if self._matches_queries(job_data, query_terms):
+                        job = self._parse_job(job_data)
+                        if job:
+                            all_jobs.append(job)
 
-                    for job_data in jobs:
-                        if self._matches_queries(job_data, query_terms):
-                            job = self._parse_job(job_data)
-                            if job:
-                                all_jobs.append(job)
-
-        except asyncio.TimeoutError:
-            print("RemoteOK API timeout")
         except Exception as e:
-            print(f"RemoteOK error: {e}")
+            logger.error("RemoteOK error: %s", e)
 
         return all_jobs
 
@@ -123,5 +123,5 @@ class RemoteOKCollector(BaseCollector):
                 extra_data={"tags": data.get("tags", [])},
             )
         except Exception as e:
-            print(f"Error parsing RemoteOK job: {e}")
+            logger.error("Error parsing RemoteOK job: %s", e)
             return None

@@ -113,20 +113,17 @@ with tab1:
 
         st.markdown("---")
 
-        # Pipeline status breakdown
+        # Pipeline status breakdown (raw current status, not cumulative funnel)
         st.subheader("Applications by Status")
 
-        pipeline_counts = funnel.get_funnel().stages
-        status_counts = {s.name.lower().replace(" ", "_"): s.count for s in pipeline_counts}
-
-        # Also count terminal statuses
         from sqlalchemy import func, select
         from src.persistence.models import Application
 
-        for status in ["rejected", "withdrawn", "ghosted"]:
-            stmt = select(func.count(Application.id)).where(Application.status == status)
-            count = session.execute(stmt).scalar() or 0
-            status_counts[status] = count
+        stmt = select(
+            Application.status, func.count(Application.id)
+        ).group_by(Application.status)
+        result = session.execute(stmt)
+        status_counts = dict(result.all())
 
         fig = create_pipeline_bar_chart(status_counts)
         st.plotly_chart(fig, width="stretch")

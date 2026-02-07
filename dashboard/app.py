@@ -77,33 +77,62 @@ def main():
         st.markdown("---")
         st.markdown("### Quick Actions")
 
-        if st.button("🔄 Refresh Data"):
+        btn_refresh = st.button("🔄 Refresh Data")
+        btn_email = st.button("📧 Sync Email")
+        btn_scan = st.button("📊 Run Job Scan")
+
+    # Handle quick actions in MAIN content area (outside sidebar) for visibility
+    if btn_refresh:
+        st.cache_data.clear()
+        st.rerun()
+
+    if btn_email:
+        st.markdown("---")
+        st.subheader("📧 Email Sync")
+        progress_bar = st.progress(0.0)
+        status_text = st.empty()
+        status_text.info("Connecting to Gmail...")
+
+        def email_progress(step, detail, pct):
+            progress_bar.progress(min(pct, 1.0))
+            status_text.info(f"**{step}** — {detail}")
+
+        try:
+            import asyncio
+            from src.main import run_email_import
+            asyncio.run(run_email_import(on_progress=email_progress))
+            progress_bar.progress(1.0)
+            status_text.success("Email sync complete!")
             st.cache_data.clear()
+            import time; time.sleep(2)
             st.rerun()
+        except Exception as e:
+            progress_bar.empty()
+            status_text.error(f"Sync failed: {e}")
 
-        if st.button("📧 Sync Email"):
-            with st.spinner("Syncing emails..."):
-                try:
-                    import asyncio
-                    from src.main import run_email_import
-                    asyncio.run(run_email_import())
-                    st.success("Email sync complete!")
-                    st.cache_data.clear()
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Sync failed: {e}")
+    if btn_scan:
+        st.markdown("---")
+        st.subheader("📊 Job Scan")
+        progress_bar = st.progress(0.0)
+        status_text = st.empty()
+        status_text.info("Initializing scan...")
 
-        if st.button("📊 Run Job Scan"):
-            with st.spinner("Running job scan..."):
-                try:
-                    import asyncio
-                    from src.main import run_job_scan
-                    asyncio.run(run_job_scan())
-                    st.success("Job scan complete!")
-                    st.cache_data.clear()
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Scan failed: {e}")
+        def scan_progress(step, detail, pct):
+            progress_bar.progress(min(pct, 1.0))
+            status_text.info(f"**{step}** — {detail}")
+
+        try:
+            import asyncio
+            from src.main import run_job_scan
+            asyncio.run(run_job_scan(on_progress=scan_progress))
+            progress_bar.progress(1.0)
+            status_text.success("Job scan complete!")
+            st.cache_data.clear()
+            import time; time.sleep(2)
+            st.rerun()
+        except Exception as e:
+            progress_bar.empty()
+            status_text.error(f"Scan failed: {e}")
 
     # Check if configured - show setup prompt if not
     if not is_configured(_project_root):

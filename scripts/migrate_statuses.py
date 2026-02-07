@@ -12,11 +12,15 @@ Migration mappings:
 
 Also updates all existing records to ensure consistency.
 """
+import logging
 import sys
 from sqlalchemy import select, update
 
 from scripts.bootstrap import get_session, init_db
+from src.logging_config import setup_logging
 from src.persistence.models import Application, StatusHistory
+
+logger = logging.getLogger(__name__)
 
 # Status migration mapping
 STATUS_MIGRATION = {
@@ -32,7 +36,7 @@ def migrate_statuses():
 
     with get_session() as session:
         # Get counts before migration
-        print("Status counts before migration:")
+        logger.info("Status counts before migration:")
         stmt = select(Application.status, Application.id)
         result = session.execute(stmt)
         apps = result.all()
@@ -43,7 +47,7 @@ def migrate_statuses():
 
         for status, count in sorted(status_counts.items()):
             migration_note = f" -> {STATUS_MIGRATION[status]}" if status in STATUS_MIGRATION else ""
-            print(f"  {status}: {count}{migration_note}")
+            logger.info("  %s: %s%s", status, count, migration_note)
 
         # Migrate each old status
         migrated = 0
@@ -55,7 +59,7 @@ def migrate_statuses():
             result = session.execute(stmt)
             count = result.rowcount
             if count > 0:
-                print(f"\nMigrated {count} applications from '{old_status}' to '{new_status}'")
+                logger.info("Migrated %s applications from '%s' to '%s'", count, old_status, new_status)
                 migrated += count
 
             # Update status history (old_status column)
@@ -73,7 +77,7 @@ def migrate_statuses():
         session.commit()
 
         # Get counts after migration
-        print("\nStatus counts after migration:")
+        logger.info("Status counts after migration:")
         stmt = select(Application.status, Application.id)
         result = session.execute(stmt)
         apps = result.all()
@@ -83,11 +87,12 @@ def migrate_statuses():
             status_counts[status] = status_counts.get(status, 0) + 1
 
         for status, count in sorted(status_counts.items()):
-            print(f"  {status}: {count}")
+            logger.info("  %s: %s", status, count)
 
-        print(f"\nTotal applications migrated: {migrated}")
-        print("Migration complete!")
+        logger.info("Total applications migrated: %s", migrated)
+        logger.info("Migration complete!")
 
 
 if __name__ == "__main__":
+    setup_logging()
     migrate_statuses()

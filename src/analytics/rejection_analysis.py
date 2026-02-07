@@ -74,14 +74,26 @@ class RejectionAnalyzer:
         r'\b(mba|technical degree|cs degree)\b',
     ]
 
-    # Keywords that indicate specific requirements
-    REQUIREMENT_INDICATORS = [
-        r'required:?\s*(.+?)(?:\n|$)',
-        r'must have:?\s*(.+?)(?:\n|$)',
-        r'requirements?:?\s*(.+?)(?:\n|$)',
-        r'qualifications?:?\s*(.+?)(?:\n|$)',
-        r'you have:?\s*(.+?)(?:\n|$)',
-        r'experience with:?\s*(.+?)(?:\n|$)',
+    # Patterns that extract individual requirement phrases from descriptions.
+    # Each pattern captures a concise requirement (e.g., "5+ years of product
+    # management experience") rather than an entire section.
+    REQUIREMENT_PHRASE_PATTERNS = [
+        # Years of experience: "5+ years of product management experience"
+        r'(\d+\+?\s*years?\s+(?:of\s+)?[a-z][a-z /,&-]{5,60}?(?:experience|background|expertise))',
+        # Degree requirements: "BA/BS in computer science"
+        r'((?:ba/?bs|bachelor|master|mba|phd|technical degree|cs degree)\s*(?:in\s+)?[a-z /,&-]{0,50})',
+        # Must-have phrases: "must have experience with..."
+        r'(?:must have|must be|required|require)\s+([a-z][a-z /,&-]{10,80}?)(?:\.|;|$)',
+        # "Experience in/with" phrases
+        r'experience (?:in|with)\s+([a-z][a-z /,&-]{5,60}?)(?:\.|;|,\s+(?:and|or|including))',
+        # "Proven track record" phrases
+        r'(proven\s+[a-z][a-z /,&-]{10,80}?)(?:\.|;|$)',
+        # "Strong/deep/excellent" skill phrases
+        r'((?:strong|deep|excellent|exceptional)\s+[a-z][a-z /,&-]{5,60}?)(?:\.|;|$)',
+        # "Ability to" phrases
+        r'(ability to\s+[a-z][a-z /,&-]{10,80}?)(?:\.|;|$)',
+        # "Familiarity/proficiency with" phrases
+        r'((?:familiarity|proficiency|fluency)\s+(?:with|in)\s+[a-z][a-z /,&-]{5,60}?)(?:\.|;|$)',
     ]
 
     def __init__(self, session: Session, profile_path: Optional[Path] = None):
@@ -129,13 +141,23 @@ class RejectionAnalyzer:
         return skills
 
     def _extract_requirements(self, text: str) -> list[str]:
-        """Extract explicit requirements from job description."""
+        """Extract individual requirement phrases from job description.
+
+        Returns concise, normalized phrases like:
+          '5+ years of product management experience'
+          'ba/bs in computer science or engineering'
+          'strong analytical and problem-solving abilities'
+        """
         requirements = []
         text_lower = text.lower()
 
-        for pattern in self.REQUIREMENT_INDICATORS:
+        for pattern in self.REQUIREMENT_PHRASE_PATTERNS:
             matches = re.findall(pattern, text_lower)
-            requirements.extend(matches)
+            for match in matches:
+                cleaned = match.strip().rstrip(".,;:")
+                # Skip very short or very long matches
+                if 10 <= len(cleaned) <= 100:
+                    requirements.append(cleaned)
 
         return requirements
 
@@ -222,14 +244,23 @@ class RejectionAnalyzer:
                     example_companies=skill_by_company.get(skill, [])[:3],
                 ))
 
-        # Extract common explicit requirements
-        all_requirements = []
+        # Extract common requirement phrases.
+        # Since each JD has unique wording, we normalize phrases by
+        # grouping on shared key terms (e.g., multiple JDs saying
+        # "5+ years of PM experience" vs "7+ years product management"
+        # both map to the "years ... experience" bucket).
+        all_requirements: list[str] = []
         for app, description in apps_with_desc:
             reqs = self._extract_requirements(description)
             all_requirements.extend(reqs)
 
+        # Direct count first — exact matches
         req_counts = Counter(all_requirements)
-        common_reqs = [req for req, count in req_counts.most_common(5) if count >= 2]
+        common_reqs = [req for req, count in req_counts.most_common(10) if count >= 2]
+
+        # If few exact matches, show the most frequent individual phrases
+        if len(common_reqs) < 3:
+            common_reqs = [req for req, _ in req_counts.most_common(8) if len(req) >= 15]
 
         # Generate recommendations
         recommendations = self._generate_recommendations(missing_keywords, top_skills)
@@ -302,13 +333,25 @@ class RejectionAnalyzer:
         job_skills = set(self._extract_skills(description))
         profile_keywords = self._get_profile_keywords()
 
-        matched = job_skills & profile_keywords
-        missing = job_skills - profile_keywords
+        # Use substring matching (same as analyze()) so single-word skills
+        # like "python" can match multi-word profile phrases and vice versa
+        matched = set()
+        missing = set()
+        for skill in job_skills:
+            skill_lower = skill.lower()
+            is_in_profile = any(
+                skill_lower in kw or kw in skill_lower
+                for kw in profile_keywords
+            )
+            if is_in_profile:
+                matched.add(skill)
+            else:
+                missing.add(skill)
 
         return {
             "company": app.company,
             "position": app.position,
-            "matched_keywords": list(matched),
-            "missing_keywords": list(missing),
+            "matched_keywords": sorted(matched),
+            "missing_keywords": sorted(missing),
             "match_percentage": len(matched) / len(job_skills) * 100 if job_skills else 0,
         }
